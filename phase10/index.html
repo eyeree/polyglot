@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#15181f">
+<title>Phase 10</title>
+<link rel="icon" href="../icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../shared/base.css">
+<link rel="stylesheet" href="phase10.css">
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <a class="btn btn-icon" href="../" aria-label="Back">‹</a>
+    <div class="title">Phase 10</div>
+    <div class="stat" id="stat"></div>
+    <button class="btn btn-icon" id="btn-menu" aria-label="Menu">⋯</button>
+  </div>
+  <div class="main p10">
+    <div class="opps" id="opps"></div>
+    <div class="center">
+      <div class="piles">
+        <button class="pile deck" id="deck" aria-label="Draw from the deck"></button>
+        <button class="pile discard" id="discard" aria-label="Take the discard"></button>
+        <button class="log" id="log" aria-label="Game log"></button>
+      </div>
+      <div class="table" id="table"></div>
+    </div>
+    <div class="me">
+      <div class="phase-line"><span id="phase"></span><span class="hint" id="hint"></span></div>
+      <div class="hand" id="hand"></div>
+    </div>
+  </div>
+  <div class="bottombar" id="actions"></div>
+</div>
+<script type="module" src="main.js"></script>
+</body>
+</html>

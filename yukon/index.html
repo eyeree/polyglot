@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#15181f">
+<title>Yukon</title>
+<link rel="icon" href="../icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../shared/base.css">
+<link rel="stylesheet" href="yukon.css">
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <a class="btn btn-icon" href="../" aria-label="Back">‹</a>
+    <div class="title">Yukon</div>
+    <div class="stat" id="stat"></div>
+    <button class="btn btn-icon" id="btn-menu" aria-label="Menu">⋯</button>
+  </div>
+  <div class="main board" id="board"></div>
+  <div class="bottombar">
+    <button class="btn" id="btn-undo" title="Undo">↶</button>
+    <button class="btn" id="btn-redo" title="Redo">↷</button>
+    <button class="btn" id="btn-branch" title="Back to the last point where you had a choice">⤺ Branch</button>
+    <button class="btn" id="btn-tree">Tree</button>
+    <button class="btn" id="btn-solve">Solve</button>
+    <button class="btn btn-primary hidden" id="btn-finish">Finish</button>
+  </div>
+</div>
+<script type="module" src="main.js"></script>
+</body>
+</html>

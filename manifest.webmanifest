@@ -1,0 +1,9 @@
+{
+  "name": "Games",
+  "short_name": "Games",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#15181f",
+  "theme_color": "#15181f",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

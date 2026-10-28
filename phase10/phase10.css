@@ -1,0 +1,148 @@
+/* Phase 10 — layout: opponent strip / piles + table / own hand / action bar. Cards are sized by --w per region. */
+.p10 {
+  display: flex; flex-direction: column; overflow: hidden;
+  --scale: 1;
+  --red: #d8333c; --blue: #2f6fde; --green: #2ea85a; --yellow: #e2b100;
+  width: 100%; max-width: 960px; margin: 0 auto;
+}
+.bottombar {
+  display: flex; gap: 6px; padding: 6px max(8px, calc((100% - 960px) / 2)) calc(6px + var(--safe-bottom)); background: var(--bg-2);
+  border-top: 1px solid #0006; flex: 0 0 auto; justify-content: center; align-items: center; min-height: 52px;
+}
+.bottombar .btn { flex: 1 1 auto; min-width: 0; padding: 0 10px; font-size: 14px; }
+.bottombar .status { flex: 1 1 auto; text-align: center; color: var(--fg-dim); font-size: 14px; }
+
+/* ---- cards -------------------------------------------------------------- */
+.card {
+  --w: 56px;
+  position: relative; flex: 0 0 auto;
+  width: var(--w); height: calc(var(--w) * 1.4); border-radius: 9%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: calc(var(--w) * 0.5); line-height: 1; color: #fff;
+  background: #777; box-shadow: 0 1px 2px #0008, inset 0 0 0 2px #fff6;
+  text-shadow: 0 1px 2px #0006; user-select: none;
+}
+.card .k { position: absolute; left: 7%; top: 6%; font-size: calc(var(--w) * 0.22); font-weight: 700; opacity: .85; }
+.card .k.b { left: auto; right: 7%; top: auto; bottom: 6%; transform: rotate(180deg); }
+.card.c-red { background: var(--red); }
+.card.c-blue { background: var(--blue); }
+.card.c-green { background: var(--green); }
+.card.c-yellow { background: var(--yellow); color: #2a2200; text-shadow: none; }
+.card.c-wild { background: linear-gradient(150deg, #7a3bb5, #2a1c3f); }
+.card.c-skip { background: linear-gradient(150deg, #8b8f9a, #4b4f59); }
+.card.back { background: #2b4c9b; box-shadow: 0 1px 2px #0008, inset 0 0 0 3px #fff9, inset 0 0 0 4px #0002; }
+.card.back::after {
+  content: ''; position: absolute; inset: 14%; border-radius: 6px;
+  background: repeating-linear-gradient(45deg, #fff2 0 3px, transparent 3px 7px), repeating-linear-gradient(-45deg, #fff2 0 3px, transparent 3px 7px);
+}
+.card.missing { background: transparent; box-shadow: inset 0 0 0 2px #fff5; color: #fff8; }
+.card.small .k { display: none; }
+
+/* ---- opponents ---------------------------------------------------------- */
+.opps {
+  display: flex; gap: 6px; padding: 6px 8px; overflow-x: auto; flex: 0 0 auto; background: var(--bg-2);
+  scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch;
+}
+.opps::-webkit-scrollbar { height: 0; }
+.opp {
+  flex: 0 0 auto; width: 150px; scroll-snap-align: start;
+  background: var(--panel); border-radius: 10px; padding: 6px 8px; border: 2px solid transparent;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.opp.active { border-color: var(--accent); background: #2a3550; }
+.opp.skipped { border-color: #ff5d6c66; }
+.opp.done { border-color: var(--ok); }
+.opp-head { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 14px; white-space: nowrap; }
+.opp-head .name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.badge { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px; color: #fff; background: var(--badge, #666); letter-spacing: .02em; }
+.skipmark { font-size: 10px; color: var(--danger); font-weight: 700; }
+.opp-meta { font-size: 12px; color: var(--fg-dim); display: flex; flex-wrap: wrap; gap: 0 5px; line-height: 1.25; }
+.opp-meta span + span::before { content: '·'; margin-right: 5px; color: #fff4; }
+.opp-meta b { color: var(--fg); font-weight: 600; }
+.opp-groups { display: flex; gap: 5px; flex-wrap: wrap; min-height: 22px; align-items: flex-start; }
+.opp-groups .mini { display: flex; }
+.opp-groups .card { --w: 14px; font-size: 9px; border-radius: 2px; box-shadow: 0 0 0 1px #0008; text-shadow: none; }
+.opp-groups .mini .card + .card { margin-left: -5px; }
+.opp-hand { display: flex; gap: 2px; flex-wrap: wrap; }
+.opp-hand .card { --w: 13px; font-size: 8px; border-radius: 2px; box-shadow: 0 0 0 1px #0008; text-shadow: none; }
+
+/* ---- centre: piles, log, table ----------------------------------------- */
+.center { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px 8px 4px; }
+.piles { display: flex; gap: 10px; align-items: stretch; flex: 0 0 auto; }
+.pile {
+  --w: 44px; position: relative; flex: 0 0 auto; width: var(--w); height: calc(var(--w) * 1.4);
+  border: 0; padding: 0; background: transparent; border-radius: 9%; cursor: pointer; color: inherit;
+}
+.pile .card { --w: 44px; position: absolute; inset: 0; }
+.pile .count { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font-weight: 800; font-size: 16px; color: #fff; text-shadow: 0 1px 3px #000; }
+.pile .label { position: absolute; left: 0; right: 0; bottom: -16px; font-size: 10px; color: var(--fg-dim); text-align: center; }
+.pile.empty { box-shadow: inset 0 0 0 2px #fff3; }
+.pile.ready .card, .pile.ready { box-shadow: 0 0 0 3px var(--accent-2); }
+.pile:disabled { cursor: default; }
+.pile.deck { margin-bottom: 16px; }
+.pile.discard { margin-bottom: 16px; }
+.log {
+  flex: 1 1 auto; min-width: 0; text-align: left; border: 0; background: var(--panel); color: var(--fg-dim);
+  border-radius: 8px; padding: 6px 8px; font-size: 12px; line-height: 1.35; cursor: pointer;
+  display: flex; flex-direction: column; justify-content: center; gap: 2px; overflow: hidden; align-self: flex-start; height: calc(44px * 1.4);
+}
+.log div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log .latest { color: var(--fg); }
+.table {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-wrap: wrap; gap: 8px; align-content: flex-start;
+  padding: 4px 2px; border-radius: 12px; background: radial-gradient(ellipse at 50% 30%, #1f6b3a, #174f2b 70%);
+  padding: 8px;
+}
+.table:empty::after { content: 'Laid-down phases appear here'; color: #fff6; font-size: 13px; margin: auto; }
+.group {
+  display: flex; flex-direction: column; gap: 2px; padding: 4px 6px 5px; border-radius: 8px;
+  background: #0003; border: 2px solid transparent; cursor: pointer;
+}
+.group.mine { background: #0005; }
+.group.target { border-color: var(--accent-2); box-shadow: 0 0 0 2px #ffb34755; }
+.group .owner { font-size: 10px; color: #fffb; display: flex; gap: 6px; }
+.group .owner .kind { color: #fff7; }
+.group .cards { display: flex; }
+.group .card { --w: 30px; }
+.group .card + .card { margin-left: calc(var(--w) * -0.42); }
+.group .card.c-wild .as { position: absolute; bottom: 4%; right: 8%; font-size: 9px; opacity: .8; }
+
+/* ---- own hand ----------------------------------------------------------- */
+.me { flex: 0 0 auto; background: var(--bg-2); border-top: 1px solid #0006; padding: 6px 8px 0; }
+.phase-line { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; padding: 0 2px; }
+.phase-line .hint { color: var(--accent-2); white-space: nowrap; }
+.phase-line .hint.ok { color: var(--ok); }
+.hand {
+  display: flex; gap: 6px; overflow-x: auto; overflow-y: hidden; padding: 12px 6px 6px; touch-action: pan-x;
+  min-height: calc(56px * 1.4 * var(--scale) + 18px);
+}
+.hand::-webkit-scrollbar { height: 0; }
+.hand .card { --w: calc(56px * var(--scale)); transition: transform .12s, box-shadow .12s; cursor: pointer; }
+.hand .card.sel { transform: translateY(-10px); box-shadow: 0 0 0 3px var(--accent-2), 0 6px 14px #0009; }
+.hand .card.new { animation: pop .25s ease; }
+.hand .empty { color: var(--fg-dim); font-size: 13px; align-self: center; }
+@keyframes pop { from { transform: translateY(8px) scale(.9); opacity: 0; } }
+
+/* keep toasts clear of the action bar and hand */
+.toast { bottom: calc(190px + var(--safe-bottom)); }
+
+/* ---- modals ------------------------------------------------------------- */
+.summary { width: 100%; border-collapse: collapse; font-size: 14px; }
+.summary th, .summary td { padding: 6px 6px; text-align: right; border-bottom: 1px solid #0004; white-space: nowrap; }
+.summary th:first-child, .summary td:first-child { text-align: left; }
+.summary th { color: var(--fg-dim); font-weight: 500; font-size: 12px; }
+.summary tr.out td { color: var(--accent-2); }
+.summary tr.winner td { color: var(--ok); font-weight: 600; }
+.summary .no { color: var(--fg-dim); }
+.summary .yes { color: var(--ok); }
+.targets { display: flex; flex-wrap: wrap; gap: 8px; }
+.targets .btn { flex: 1 1 40%; }
+.help p { margin: 6px 0; }
+.loglist { font-size: 13px; line-height: 1.5; }
+.loglist div { padding: 2px 0; border-bottom: 1px solid #0003; }
+.loglist .hand-mark { color: var(--accent); font-weight: 600; margin-top: 6px; }
+
+@media (min-width: 700px) {
+  .opp { width: 180px; }
+  .group .card { --w: 36px; }
+}

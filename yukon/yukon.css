@@ -1,0 +1,83 @@
+.board {
+  --cw: 50px; --ch: 70px;
+  background: var(--felt, #1f6b3a);
+  position: relative; overflow: hidden; touch-action: none;
+  background-image: radial-gradient(ellipse at 50% 30%, #fff1, transparent 70%);
+}
+.bottombar {
+  display: flex; gap: 6px; padding: 6px 8px calc(6px + var(--safe-bottom)); background: var(--bg-2);
+  border-top: 1px solid #0006; flex: 0 0 auto; justify-content: center; flex-wrap: wrap;
+}
+.bottombar .btn { flex: 1 1 auto; min-width: 0; padding: 0 8px; font-size: 14px; }
+
+.slot {
+  position: absolute; width: var(--cw); height: var(--ch); border-radius: 7%;
+  border: 2px dashed #fff5; box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center; color: #fff6; font-size: calc(var(--cw) * 0.5);
+}
+.slot.hint, .colzone.hint { border-color: var(--accent-2); box-shadow: 0 0 0 3px #ffb34766; }
+.colzone { position: absolute; border-radius: 7%; }
+.colzone.hint { border: 2px dashed var(--accent-2); }
+.board-info {
+  position: absolute; color: #fffb; font-size: 11px; line-height: 1.4; padding: 2px 4px; white-space: nowrap; overflow: hidden;
+}
+.board-info b { color: #fff; }
+
+.card {
+  position: absolute; left: 0; top: 0; width: var(--cw); height: var(--ch);
+  border-radius: 7%; background: #fdfdf7; color: #111; box-sizing: border-box;
+  box-shadow: 0 1px 2px #0007, 0 0 0 1px #0003;
+  transition: transform var(--anim, 180ms) ease;
+  will-change: transform;
+  overflow: hidden;
+}
+.card.notransition { transition: none; }
+.card.red { color: #c81e2e; }
+.card .corner {
+  position: absolute; left: 7%; top: 4%; font-weight: 700; font-size: calc(var(--cw) * 0.3);
+  line-height: 1; letter-spacing: -0.03em; display: flex; flex-direction: row; align-items: baseline; gap: 1px;
+}
+.card .corner .s { font-size: calc(var(--cw) * 0.27); }
+.card .pip {
+  position: absolute; right: 6%; bottom: 2%; font-size: calc(var(--cw) * 0.55); line-height: 1; opacity: .9;
+}
+.card.down { background: var(--back, #2b4c9b); box-shadow: 0 1px 2px #0007, inset 0 0 0 3px #fff9, inset 0 0 0 4px #0002; }
+.card.down::after {
+  content: ''; position: absolute; inset: 6px; border-radius: 4px;
+  background: repeating-linear-gradient(45deg, #fff2 0 3px, transparent 3px 7px), repeating-linear-gradient(-45deg, #fff2 0 3px, transparent 3px 7px);
+}
+.card.down .corner, .card.down .pip { display: none; }
+.card.selected { box-shadow: 0 0 0 3px var(--accent-2), 0 4px 10px #0008; }
+.card.hint { box-shadow: 0 0 0 3px #ffb347aa, 0 1px 2px #0007; }
+.card.dragging { transition: none; box-shadow: 0 8px 20px #0009; }
+
+/* tree drawer */
+.tree-summary { color: var(--fg-dim); font-size: 13px; padding: 2px 4px 8px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.tree-actions { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 0 8px; }
+.tree-actions .btn { font-size: 13px; min-height: 34px; }
+.tree-rows { font-size: 14px; font-variant-numeric: tabular-nums; }
+.trow {
+  display: flex; align-items: center; gap: 6px; min-height: 36px; padding: 2px 4px; border-radius: 6px;
+  cursor: pointer; border-left: 2px solid transparent;
+}
+.trow:active { background: #fff1; }
+.trow.current { background: #4f8cff33; border-left-color: var(--accent); }
+.trow.onpath { border-left-color: #fff3; }
+.trow .tick { width: 18px; text-align: center; color: var(--fg-dim); }
+.trow .lbl { flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trow .lbl .red { color: #ff6b7a; }
+.trow .n { color: var(--fg-dim); font-size: 12px; min-width: 2.2em; text-align: right; }
+.trow .v { font-size: 13px; min-width: 1.4em; text-align: center; }
+.trow .v.win { color: var(--ok); } .trow .v.lose { color: var(--danger); } .trow .v.unknown { color: var(--fg-dim); }
+.trow .v.solving { animation: pulse 1s infinite; }
+.trow .more { width: 34px; height: 34px; min-width: 34px; min-height: 34px; padding: 0; background: transparent; font-size: 18px; }
+.trow.ghost { color: var(--fg-dim); font-style: italic; }
+.trow.ghost .lbl::before { content: '+ '; }
+.trow.chain { color: var(--fg-dim); font-size: 13px; }
+.trow.toggle { color: var(--fg-dim); font-size: 13px; }
+.trow.contested .lbl::after { content: ' ⚖'; opacity: .7; }
+@keyframes pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+
+.legend { color: var(--fg-dim); font-size: 12px; margin: 10px 4px 0; line-height: 1.6; }
+.progress { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.progress .count { font-size: 24px; font-variant-numeric: tabular-nums; }

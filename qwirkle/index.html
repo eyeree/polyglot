@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#15181f">
+<title>Qwirkle</title>
+<link rel="icon" href="../icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../shared/base.css">
+<link rel="stylesheet" href="qwirkle.css">
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <a class="btn btn-icon" href="../" aria-label="Back">‹</a>
+    <div class="title">Qwirkle</div>
+    <div class="stat" id="stat-bag"></div>
+    <button class="btn btn-icon" id="btn-menu" aria-label="Menu">⋯</button>
+  </div>
+  <div class="players" id="players"></div>
+  <div class="main">
+    <div class="board-scroll" id="board-scroll">
+      <div class="board-wrap" id="board-wrap"><div class="board" id="board"></div></div>
+    </div>
+    <div class="zoom">
+      <button class="btn" id="zoom-in" aria-label="Zoom in">+</button>
+      <button class="btn" id="zoom-out" aria-label="Zoom out">−</button>
+    </div>
+    <div class="turn-note" id="turn-note"></div>
+  </div>
+  <div class="hand" id="hand"></div>
+  <div class="bottombar">
+    <button class="btn" id="btn-swap">Swap</button>
+    <button class="btn hidden" id="btn-takeback">Take back</button>
+    <button class="btn hidden" id="btn-pass">Pass</button>
+    <button class="btn btn-primary" id="btn-play">Play</button>
+  </div>
+</div>
+<script type="module" src="main.js"></script>
+</body>
+</html>

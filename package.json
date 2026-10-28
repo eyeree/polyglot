@@ -1,0 +1,12 @@
+{
+  "name": "polyglot-games",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal mobile-friendly re-creations of a few idle games. No build step: plain HTML/CSS/ES modules.",
+  "type": "module",
+  "scripts": {
+    "start": "node serve.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "engines": { "node": ">=20" }
+}

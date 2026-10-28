@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#15181f">
+<title>Games</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="shared/base.css">
+<style>
+  .launcher { max-width: 520px; margin: 0 auto; padding: 24px 16px calc(24px + var(--safe-bottom)); }
+  .launcher h1 { font-size: 22px; margin: 8px 0 18px; }
+  .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .tile {
+    display: flex; flex-direction: column; justify-content: flex-end; gap: 4px;
+    aspect-ratio: 1 / 0.85; padding: 14px; border-radius: 16px; text-decoration: none; color: #fff;
+    background: var(--panel); box-shadow: inset 0 0 0 1px #fff1;
+  }
+  .tile:active { filter: brightness(1.15); }
+  .tile .glyph { font-size: 42px; flex: 1; display: flex; align-items: center; }
+  .tile .name { font-weight: 600; font-size: 17px; }
+  .tile .desc { font-size: 12px; opacity: .8; }
+  .t1 { background: linear-gradient(160deg, #1f6b3a, #134a28); }
+  .t2 { background: linear-gradient(160deg, #6b3a9e, #3f2160); }
+  .t3 { background: linear-gradient(160deg, #2a5fb8, #1a3c78); }
+  .t4 { background: linear-gradient(160deg, #b8562a, #7a341a); }
+  .foot { margin-top: 22px; color: var(--fg-dim); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="launcher">
+  <h1>Games</h1>
+  <div class="tiles">
+    <a class="tile t1" href="yukon/"><div class="glyph">🂡</div><div class="name">Yukon</div><div class="desc">Solitaire with a game tree & solver</div></a>
+    <a class="tile t2" href="phase10/"><div class="glyph">🔟</div><div class="name">Phase 10</div><div class="desc">Rummy-style phases vs. AI opponents</div></a>
+    <a class="tile t3" href="blocks/"><div class="glyph">🧩</div><div class="name">Blocks</div><div class="desc">Fit tetrominoes, clear lines, earn rotations</div></a>
+    <a class="tile t4" href="qwirkle/"><div class="glyph">🔷</div><div class="name">Qwirkle</div><div class="desc">Shapes & colors with bonus cells</div></a>
+  </div>
+  <p class="foot">Each game has a ⚙ settings panel for tweaking rules and visuals. Deeper tweaks live in each game's <code>config.js</code>.</p>
+</div>
+</body>
+</html>

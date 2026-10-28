@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#15181f">
+<title>Blocks</title>
+<link rel="icon" href="../icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../shared/base.css">
+<link rel="stylesheet" href="blocks.css">
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <a class="btn btn-icon" href="../" aria-label="Back">‹</a>
+    <div class="title">Blocks</div>
+    <div class="stat" title="Score">Score <b id="score">0</b></div>
+    <div class="stat" title="Best score">Best <b id="best">0</b></div>
+    <div class="stat stat-rot" title="Rotation points">⟳ <b id="rot">0</b></div>
+    <button class="btn btn-icon" id="btn-menu" aria-label="Menu">⋯</button>
+  </div>
+  <div class="main" id="main">
+    <div class="board-wrap">
+      <div class="board" id="board"></div>
+      <div class="score-pop" id="pop"></div>
+    </div>
+    <div class="tray-wrap" id="tray-wrap">
+      <div class="tray" id="tray">
+        <div class="slot" data-source="0"></div>
+        <div class="slot" data-source="1"></div>
+        <div class="slot" data-source="2"></div>
+        <div class="slot side" data-source="side"><div class="slot-label">side</div></div>
+      </div>
+      <div class="actions" id="actions"></div>
+    </div>
+  </div>
+</div>
+<script type="module" src="main.js"></script>
+</body>
+</html>
