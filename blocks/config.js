@@ -34,6 +34,7 @@ export const DEFAULTS = {
   clearMultiplier: 2,          // clear score = cellsCleared × linesCleared × clearMultiplier
   allowSwap: true,             // dropping a tray block on an occupied side slot swaps the two
   startRotationPoints: 0,
+  carryRotationPoints: true,   // unspent rotation points are brought into the next game
   // visuals
   animMs: 200,                 // line-clear flash / snap-back duration
   cellGap: 3,                  // px between board cells

@@ -26,6 +26,7 @@ const SETTINGS_SCHEMA = [
   { key: 'rotationPointsPerLine', label: 'Rotation points per line', type: 'range', min: 0, max: 5, step: 1 },
   { key: 'clearMultiplier', label: 'Clear multiplier', type: 'range', min: 1, max: 6, step: 1, help: 'Clear score = cells × lines × multiplier' },
   { key: 'allowSwap', label: 'Swap with the side block', type: 'bool', help: 'Dropping a tray block on an occupied side slot swaps the two' },
+  { key: 'carryRotationPoints', label: 'Carry rotation points over', type: 'bool', help: 'Unspent ⟳ points go into the next game' },
   { key: 'animMs', label: 'Animation (ms)', type: 'range', min: 0, max: 250, step: 10 },
   { key: 'cellGap', label: 'Cell gap (px)', type: 'range', min: 0, max: 6, step: 1 },
   ...SHAPE_TYPES.map(t => ({ key: 'color' + t, label: `${t} block colour`, type: 'color' })),
@@ -154,13 +155,22 @@ function renderBoard() {
 function blockEl(block, source) {
   const shape = G.shapeOf(block);
   const w = shape[0].length;
+  const c = cfg();
+  const hasMove = G.blockHasMove(state, block, c);          // fits somewhere in an affordable rotation
+  const fitsNow = hasMove && G.blockFitsNow(state, block, c); // fits as currently shown
   const el = h('div.block', {
-    class: (selected === source ? 'selected' : '') + (drag && drag.source === source ? ' dragging' : ''),
+    class: [
+      selected === source ? 'selected' : '',
+      drag && drag.source === source ? 'dragging' : '',
+      !hasMove ? 'dead' : !fitsNow ? 'stuck' : '',
+    ].filter(Boolean).join(' '),
+    title: !hasMove ? 'Fits nowhere' : !fitsNow ? 'Fits only in another rotation' : null,
     data: { source }, style: { gridTemplateColumns: `repeat(${w}, var(--mini))` },
   });
   for (const row of shape) for (const v of row) el.append(h('div.bcell' + (v ? '.on' : ''), { style: v ? { background: colorOf(block.type) } : null }));
-  const cost = G.rotationCost(block, cfg());
+  const cost = G.rotationCost(block, c);
   if (cost > 0) el.append(h('div.badge', { text: `⟳ −${cost}`, title: 'Rotated: placing costs rotation points' }));
+  else if (hasMove && !fitsNow) el.append(h('div.badge.hint-badge', { text: '⟳', title: 'Fits only in another rotation' }));
   return el;
 }
 
@@ -178,11 +188,19 @@ function renderTray() {
 function renderActions() {
   clear(actions);
   if (state.over) {
-    actions.append(h('div.hint', { text: 'Game over — no block fits' }), h('button.btn.btn-primary', { text: 'New game', onClick: () => newGame() }));
+    actions.append(
+      h('div.hint.final', {}, 'Game over · final score ', h('b', { text: state.score.toLocaleString() })),
+      h('button.btn.btn-primary', { text: 'New game', onClick: () => newGame() }),
+    );
     return;
   }
   if (selected == null) {
-    actions.append(h('div.hint', { text: 'Drag a block onto the board, or tap one to select it' }));
+    const srcs = G.sources(state);
+    const dead = srcs.filter(s => !G.blockHasMove(state, G.getBlock(state, s), cfg()));
+    const text = !dead.length ? 'Drag a block onto the board, or tap one to select it'
+      : dead.length === srcs.length ? 'Nothing fits — stash the block to finish the turn'
+      : 'Greyed blocks fit nowhere' + (state.side ? '' : ' · stash one to keep it');
+    actions.append(h('div.hint', { text }));
     return;
   }
   const b = G.getBlock(state, selected);
@@ -221,12 +239,17 @@ function showPop(points) {
 }
 
 // ---------------------------------------------------------------- game flow
+/** Unspent rotation points that a new game started now would begin with. */
+function carryOver() { return settings.get('carryRotationPoints') && state ? state.rotPoints : 0; }
+
 async function newGame(seed = randomSeed()) {
-  state = G.newGame(seed >>> 0, cfg());
+  const carry = carryOver();
+  state = G.newGame(seed >>> 0, cfg(), carry);
   selected = null; drag = null; pendingClear = null; justPlaced = null; overShownFor = null;
   clearTimeout(clearTimer);
   buildBoard(state.board.length);
   afterChange();
+  if (carry > 0) toast(`⟳ ${carry} rotation point${carry === 1 ? '' : 's'} carried over`);
 }
 
 function afterChange() {
@@ -281,11 +304,17 @@ function checkEnd() {
 }
 
 async function showGameOver() {
+  const nothingFits = !G.allBlocks(state).some(b => G.blockHasMove(state, b, cfg()));
+  const carry = carryOver();
+  const lines = [
+    h('p.muted', { text: nothingFits ? 'No block fits anywhere.' : 'The remaining blocks can\'t all be placed, even using the side slot.' }),
+    h('p.final-score', {}, 'Final score ', h('b', { text: state.score.toLocaleString() }), state.score >= best && state.score > 0 ? ' — new best!' : ''),
+    h('p.muted', { text: `Best ${best.toLocaleString()} · ${state.deals} turns · seed ${state.seed}` }),
+  ];
+  if (carry > 0) lines.push(h('p.muted', { text: `⟳ ${carry} rotation point${carry === 1 ? '' : 's'} carry over to the next game` }));
   const v = await modal({
     title: 'Game over',
-    body: h('div', {},
-      h('p', {}, 'No block fits anywhere. Score: ', h('b', { text: state.score.toLocaleString() }), state.score >= best && state.score > 0 ? ' — new best!' : ''),
-      h('p.muted', { text: `Best ${best.toLocaleString()} · ${state.deals} turns · seed ${state.seed}` })),
+    body: h('div', {}, ...lines),
     buttons: [{ label: 'Close', value: false }, { label: 'New game', value: true, primary: true }],
   });
   if (v) newGame();
@@ -484,8 +513,9 @@ function showHelp() {
       h('p', {}, h('b', {}, 'Placing: '), 'drag a block onto the board (the ghost shows green where it fits, red where it doesn\'t), or tap a block to select it and then tap a board cell.'),
       h('p', {}, h('b', {}, 'Clearing: '), `full rows and columns clear together. Placing scores the block's cells; a clear scores cells × lines × ${c.clearMultiplier}, so clearing several lines at once is worth much more.`),
       h('p', {}, h('b', {}, 'Side slot: '), `drop a tray block there to keep it for later${c.allowSwap ? ' (dropping onto an occupied slot swaps the two)' : ''}. Stashing counts as using the block. The side block can be placed on any turn.`),
-      h('p', {}, h('b', {}, 'Rotation points ⟳: '), `blocks must be placed as dealt unless you pay. Every cleared line earns ${c.rotationPointsPerLine}; placing a block in a different rotation costs ${c.rotationCost}, charged when you place it. Rotating back to the dealt orientation is free. Select a block to see the ⟳ Rotate button and its cost (keyboard: R).`),
-      h('p', {}, h('b', {}, 'Game over: '), 'when no tray or side block fits anywhere (counting rotations you can afford) and the turn can\'t be finished by stashing.'),
+      h('p', {}, h('b', {}, 'Rotation points ⟳: '), `blocks must be placed as dealt unless you pay. Every cleared line earns ${c.rotationPointsPerLine}; placing a block in a different rotation costs ${c.rotationCost}, charged when you place it. Rotating back to the dealt orientation is free. Select a block to see the ⟳ Rotate button and its cost (keyboard: R).${settings.get('carryRotationPoints') ? ' Unspent points carry over to your next game.' : ''}`),
+      h('p', {}, h('b', {}, 'Greyed blocks: '), 'fit nowhere in any rotation you can afford; a small ⟳ badge means the block fits only after rotating it. Greyed blocks can still be stashed.'),
+      h('p', {}, h('b', {}, 'Game over: '), 'when the turn can no longer be finished. All but one of the tray and side blocks must be placed (the side slot keeps the last one), and the game checks every order of placing them, counting line clears and rotations you can afford. The final score is shown with a restart.'),
     ),
   });
 }
@@ -507,6 +537,7 @@ function setState(s) {
 }
 
 if (!restore()) state = G.newGame(randomSeed(), cfg());
+else state = G.refresh(state, cfg()); // saved games were flagged under whatever rules applied at the time
 buildBoard(state.board.length);
 render();
 persist();

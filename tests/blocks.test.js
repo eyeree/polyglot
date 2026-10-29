@@ -284,6 +284,81 @@ test('game over when nothing fits and the turn cannot be finished by stashing', 
   // the side block fitting rescues
   const gap = (x, y) => !(y === 9 && x >= 6); // 4 free cells in a row
   assert.equal(G.anyMoves(mk({ fill: gap, tray: [G.blockOf('T'), G.blockOf('O')], side: G.blockOf('I', 0) })), true);
+  // the exact test agrees in all of these
+  assert.equal(G.canFinishTurn(mk({ fill: almostFull, tray: [G.blockOf('T'), G.blockOf('O'), G.blockOf('I')] })), false);
+  assert.equal(G.canFinishTurn(mk({ fill: almostFull, tray: [G.blockOf('T'), G.blockOf('O')] })), false);
+  assert.equal(G.canFinishTurn(mk({ fill: almostFull, tray: [null, G.blockOf('T'), null] })), true);
+  assert.equal(G.canFinishTurn(mk({ fill: almostFull, tray: [null, G.blockOf('T'), null], side: G.blockOf('O') })), false);
+  assert.equal(G.canFinishTurn(mk({ fill: gap, tray: [G.blockOf('T'), G.blockOf('O')], side: G.blockOf('I', 0) })), true, 'the side I completes row 9 (and the full columns) → everything clears');
+});
+
+// ---------------------------------------------------------------- exact game-over (turn look-ahead)
+test('game over is detected as soon as the turn cannot be finished, not after the last block that fits', () => {
+  // Isolated single holes on the diagonal keep every row and column from clearing; one T-shaped pocket.
+  const holes = new Set();
+  for (let i = 0; i < 10; i++) holes.add(`${i},${i}`);
+  for (const c of ['5,1', '6,1', '7,1', '6,2']) holes.add(c);
+  const fill = (x, y) => !holes.has(`${x},${y}`);
+  const s = mk({ fill, tray: [G.blockOf('T', 0, 1), G.blockOf('O', 0, 2), null], side: G.blockOf('I', 0, 3), rotPoints: 0 });
+  assert.ok(G.blockHasMove(s, s.tray[0]), 'T fits in the pocket');
+  assert.ok(!G.blockHasMove(s, s.tray[1]) && !G.blockHasMove(s, s.side), 'O and I fit nowhere');
+  assert.equal(G.anyMoves(s), true, 'a move exists…');
+  assert.equal(G.canFinishTurn(s), false, '…but after it O and the side I both still need homes and have none');
+  assert.equal(G.refresh(s).over, true);
+  // with the side slot empty the lone leftover can be stashed → still playable
+  assert.equal(G.canFinishTurn({ ...s, side: null }), true);
+  // T plus the side I only (no O): place T, keep I → playable
+  assert.equal(G.canFinishTurn({ ...s, tray: [s.tray[0], null, null] }), true);
+  // and playing it out confirms the dead end
+  const res = G.place(s, 0, 5, 1);
+  assert.equal(res.points.lines, 0);
+  assert.equal(res.state.over, true);
+});
+
+test('a clear mid-turn can make room and pay for a rotation; the search accounts for both', () => {
+  // Every row/column keeps an isolated hole so nothing clears by accident, except row 9 (x 6..9 free)
+  // which the horizontal I completes. Row 8 has (0,8) and (1,8) free.
+  const holes = new Set(['2,0', '7,1', '3,2', '8,3', '4,4', '9,5', '5,6', '6,7', '0,8', '1,8', '6,9', '7,9', '8,9', '9,9']);
+  const fill = (x, y) => !holes.has(`${x},${y}`);
+  const base = mk({ fill, tray: [G.blockOf('I', 0, 1), G.blockOf('O', 0, 2), null], side: G.blockOf('L', 0, 3), rotPoints: 0 });
+  assert.ok(!G.blockHasMove(base, base.tray[1]), 'O has no 2×2 yet');
+  assert.ok(!G.blockHasMove(base, base.side), 'L fits nowhere');
+  assert.equal(G.canFinishTurn(base), true, 'I clears row 9, then O fits at (0,8); L stays in the side slot');
+  const r1 = G.place(base, 0, 6, 9);
+  assert.deepEqual(r1.cleared.rows, [9]);
+  assert.deepEqual(r1.cleared.cols, []);
+  assert.equal(r1.state.over, false);
+  assert.ok(G.canPlace(r1.state.board, SHAPES.O, 0, 8));
+  // T instead of O: as dealt it never fits; rotated 180° it fits after the clear, if affordable.
+  const withT = { ...base, tray: [G.blockOf('I', 0, 1), G.blockOf('T', 0, 2), null] };
+  assert.equal(G.canFinishTurn(withT, cfg({ rotationCost: 2 })), false, 'the clear earns 1 point, the rotation costs 2');
+  assert.equal(G.canFinishTurn(withT, cfg({ rotationCost: 1 })), true, 'a 1-point rotation is paid for by the clear');
+  assert.equal(G.canFinishTurn({ ...withT, rotPoints: 2 }), true, 'or by points already banked');
+  assert.equal(G.refresh(withT).over, true);
+});
+
+test('blockFitsNow vs blockHasMove drive the greying', () => {
+  const colGap = (x, y) => !(x === 9 && y >= 6); // vertical 4-cell gap only
+  const s = mk({ fill: colGap, tray: [G.blockOf('I', 0, 1), G.blockOf('O', 0, 2)], rotPoints: 2 });
+  assert.equal(G.blockFitsNow(s, s.tray[0]), false, 'horizontal I does not fit as shown');
+  assert.equal(G.blockHasMove(s, s.tray[0]), true, 'but it can be rotated for 2 points');
+  assert.equal(G.blockHasMove({ ...s, rotPoints: 1 }, s.tray[0]), false, 'not when unaffordable');
+  assert.equal(G.blockHasMove(s, s.tray[1]), false, 'O never fits here');
+  assert.deepEqual(G.placeableShapes(G.blockOf('I', 0), 0).map(p => p.cost), [0]);
+  assert.deepEqual(G.placeableShapes(G.blockOf('I', 0), 2).map(p => p.cost), [0, 2]);
+  const ps = G.placeableShapes(G.blockOf('T', 1), 2);
+  assert.equal(ps.length, 4);
+  assert.deepEqual(ps.filter(p => p.cost === 0).map(p => p.rot), [1], 'only the dealt rotation is free');
+});
+
+test('rotation points carry into the next game', () => {
+  const a = G.newGame(3, cfg(), 5);
+  assert.equal(a.rotPoints, 5);
+  assert.equal(a.score, 0);
+  assert.equal(G.newGame(3, cfg({ startRotationPoints: 1 }), 5).rotPoints, 6);
+  assert.equal(G.newGame(3).rotPoints, 0);
+  assert.equal(G.newGame(3, cfg(), -2).rotPoints, 0, 'never negative');
+  assert.ok(G.rotateBlock(a, 0, 1), 'carried points are usable at once');
 });
 
 test('game over counts only rotations the player can afford', () => {

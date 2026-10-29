@@ -52,6 +52,11 @@
 .block { position: relative; display: grid; gap: var(--mini-gap); padding: 6px; border-radius: 8px; }
 .block.selected { background: #fff2; box-shadow: 0 0 0 2px var(--accent-2); }
 .block.dragging { opacity: .25; }
+.block.dead { opacity: .32; filter: grayscale(.9); }          /* fits nowhere in any affordable rotation */
+.block.dead.selected { opacity: .6; }
+.block.dead .badge { display: none; }
+.block.stuck .bcell.on { opacity: .7; }                       /* fits only after rotating */
+.block .badge.hint-badge { background: var(--bg-2); color: var(--accent-2); box-shadow: inset 0 0 0 1px var(--accent-2); }
 .block .badge {
   position: absolute; right: -6px; top: -6px; font-size: 10px; line-height: 1; padding: 3px 5px; border-radius: 999px;
   background: var(--accent-2); color: #000; font-weight: 600;
@@ -72,6 +77,10 @@
 .actions { display: flex; gap: 8px; align-items: center; justify-content: center; min-height: 44px; flex-wrap: wrap; }
 .actions .hint { color: var(--fg-dim); font-size: 13px; text-align: center; }
 .actions .cost { font-size: 12px; opacity: .75; }
+.actions .hint.final { color: var(--fg); font-size: 14px; }
+.actions .hint.final b { font-size: 18px; font-variant-numeric: tabular-nums; }
+.final-score { font-size: 17px; margin: 10px 0; }
+.final-score b { font-size: 28px; font-variant-numeric: tabular-nums; }
 
 /* score pop-up over the board */
 .score-pop {

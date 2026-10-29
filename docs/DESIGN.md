@@ -84,8 +84,13 @@ winning line to the tree as solver-found nodes) and *Analyse choices* (solve eac
 node and label the alternatives ✓/✗/?).
 
 ### UI (`main.js`)
-Foundations row on top, 7 columns below; cards are absolutely-positioned divs sized from the board
-width (card w = (W − 8·gap)/7, h = 1.4·w). Column overlap shrinks per-column so tall columns fit.
+Foundations row on top, 7 columns below; cards are absolutely-positioned divs inside a scrolling
+layer. Card width is the smaller of the width limit ((W − 8·gap)/7) and the height limit that lets
+the foundation row plus a column of `fitCards` face-up cards (default 11: the biggest starting stack
+as if fully face-up) fit without scrolling; h = 1.4·w, times `cardScale`. Card offsets are never
+squeezed: the face-up offset is at least `MIN_OVERLAP_UP` (0.27·h) so the rank + suit corner of every
+stacked card stays visible, and a column taller than the board makes the board scroll (drag on the
+felt or a face-down card, or use the wheel; dragging a card near the top/bottom edge auto-scrolls).
 Input: drag a stack to a column/foundation, or tap to select then tap destination; tapping a
 selectable top card when nothing is selected and it can go to the foundation sends it there.
 Tree drawer: indented list, current path highlighted, unexplored alternatives shown as dimmed
@@ -153,11 +158,28 @@ points (previewing rotations in the tray is free; cost is charged on placement; 
 dealt orientation costs nothing). Shapes: the 7 tetrominoes (I O T S Z J L) as a list of cell matrices
 in `config.js` so more can be added.
 
-Game over when no tray/side block fits anywhere (counting affordable rotations) **and** the turn can't
-be finished by stashing (i.e. not: exactly 1 tray block left with the side slot empty).
+**Game over** = the current turn can no longer be finished (`canFinishTurn` in `game.js`). The turn ends
+when the tray is empty, and the side slot can absorb at most one leftover block (stash into an empty
+slot, swap, or place the side block first and then stash), so the turn is finishable iff all but at
+most one of the tray + side blocks can be placed in *some* order. That is decided by an exact
+depth-first search over placements with a transposition set, counting the lines each placement clears
+and the rotation points they earn (a clear mid-turn can make room or pay for a rotation). It is checked
+after every action, so a position is flagged as soon as it is hopeless rather than after the player
+places the last block that fits; the modal says which case applies and shows the final score and a
+restart. `MAX_SEARCH_NODES` caps the search (60k placements; beyond it the position is assumed
+playable). `anyMoves` remains as the cheap necessary condition.
 
-Logic (`game.js`, pure): `newGame(seed, cfg)`, `canPlace(board, shape, x, y)`, `place(state, source, x, y) -> {state, cleared, points}`,
-`rotate(shape)`, `anyMoves(state)`, `dealTray(state)`. UI: board as CSS grid; drag from tray with a ghost
+**Greyed blocks**: a tray/side block that fits nowhere in any affordable rotation (`blockHasMove`
+false) is drawn greyed; one that fits only after an affordable rotation (`blockFitsNow` false) is
+dimmed with a ⟳ badge. Greyed blocks can still be stashed.
+
+**Carry-over**: `newGame(seed, cfg, carryRotationPoints)` starts with `startRotationPoints + carry`;
+the UI passes the previous game's unspent points when the `carryRotationPoints` setting is on
+(default), whether the previous game ended or was abandoned.
+
+Logic (`game.js`, pure): `newGame(seed, cfg, carry)`, `canPlace(board, shape, x, y)`, `commit(board, shape, x, y, type)`,
+`place(state, source, x, y) -> {state, cleared, points}`, `rotate(shape)`, `canFinishTurn(state)`, `isGameOver(state)`,
+`blockHasMove / blockFitsNow`, `dealTray(state)`. UI: board as CSS grid; drag from tray with a ghost
 preview (block drawn above the finger with the grab-cell offset so it's visible), tap-to-select then
 tap-cell as fallback; rotate button on the selected block showing the cost. High score in localStorage.
 

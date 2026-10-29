@@ -13,7 +13,7 @@ no build step, no dependencies.
 ## Run
 
 ```bash
-node serve.js            # http://localhost:8080/  (also prints a LAN URL for your phone)
+node serve.js            # http://localhost:7659/  (also prints a LAN URL for your phone)
 node --test tests/*.test.js   # logic tests
 ```
 

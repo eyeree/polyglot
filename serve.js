@@ -1,5 +1,5 @@
 // Zero-dependency static file server.
-// Usage: node serve.js [port]   (default 8080, binds 0.0.0.0 so your phone can reach it over LAN)
+// Usage: node serve.js [port]   (default 7659, binds 0.0.0.0 so your phone can reach it over LAN)
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,7 +7,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
-const port = Number(process.argv[2] || process.env.PORT || 8080);
+const port = Number(process.argv[2] || process.env.PORT || 7659);
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',

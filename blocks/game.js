@@ -29,6 +29,9 @@ export function sameShape(a, b) {
   return a.length === b.length && a[0].length === b[0].length && a.every((row, y) => row.every((v, x) => !!v === !!b[y][x]));
 }
 
+/** Stable string for a shape (filled pattern only). */
+export function shapeKey(m) { return m.map(r => r.map(v => (v ? 1 : 0)).join('')).join('/'); }
+
 /** [[dx, dy], …] of the filled cells of a matrix. */
 export function cells(m) {
   const out = [];
@@ -84,6 +87,24 @@ export function fullLines(board) {
   return { rows, cols };
 }
 
+/** Fill the shape's cells with `type`, then clear every row and column that is now full. Pure.
+ *  -> { board, placedCells, rows, cols, clearedCells: [[x, y, type], …] } */
+export function commit(board, shape, x, y, type) {
+  const n = board.length;
+  const next = board.map(r => r.slice());
+  const placedCells = cells(shape).map(([dx, dy]) => [x + dx, y + dy]);
+  for (const [bx, by] of placedCells) next[by][bx] = type;
+  const { rows, cols } = fullLines(next);
+  const clearedCells = [];
+  for (const r of rows) for (let cx = 0; cx < n; cx++) clearedCells.push([cx, r, next[r][cx]]);
+  for (const c of cols) for (let cy = 0; cy < n; cy++) if (!rows.includes(cy)) clearedCells.push([c, cy, next[cy][c]]);
+  for (const [cx, cy] of clearedCells) next[cy][cx] = null;
+  return { board: next, placedCells, rows, cols, clearedCells };
+}
+
+/** Occupancy string of a board (colours ignored). */
+export function boardKey(board) { return board.map(r => r.map(v => (v ? 1 : 0)).join('')).join(''); }
+
 // ---------------------------------------------------------------- blocks in tray / side
 export function getBlock(state, source) { return source === 'side' ? state.side : (state.tray[source] ?? null); }
 
@@ -104,21 +125,96 @@ export function sources(state) {
 
 export function trayCount(state) { return state.tray.filter(Boolean).length; }
 
+/** Every block in play: tray blocks first, then the side block. */
+export function allBlocks(state) { return sources(state).map(s => getBlock(state, s)); }
+
 export function affordableRotations(state, block, cfg = DEFAULTS) {
   const out = [];
   for (let r = 0; r < 4; r++) if (rotationCost({ ...block, cur: r }, cfg) <= state.rotPoints) out.push(r);
   return out;
 }
 
-export function blockHasMove(state, block, cfg = DEFAULTS) {
-  return affordableRotations(state, block, cfg).some(r => fitsAnywhere(state.board, rotateN(SHAPES[block.type], r)));
+/** Distinct shapes the block may be placed as with `rotPoints` available, each with its cost. */
+export function placeableShapes(block, rotPoints, cfg = DEFAULTS) {
+  const out = [];
+  for (let r = 0; r < 4; r++) {
+    const b = { ...block, cur: r };
+    const cost = rotationCost(b, cfg);
+    if (cost > rotPoints) continue;
+    const shape = shapeOf(b);
+    if (!out.some(o => sameShape(o.shape, shape))) out.push({ shape, cost, rot: r });
+  }
+  return out;
 }
 
-/** False = game over: nothing fits (counting affordable rotations) and the turn can't be finished by stashing. */
+/** The block fits somewhere as it is shown now (current rotation, which must be affordable). */
+export function blockFitsNow(state, block, cfg = DEFAULTS) {
+  return rotationCost(block, cfg) <= state.rotPoints && fitsAnywhere(state.board, shapeOf(block));
+}
+
+/** The block fits somewhere in some affordable rotation. False = grey it out. */
+export function blockHasMove(state, block, cfg = DEFAULTS) {
+  return placeableShapes(block, state.rotPoints, cfg).some(({ shape }) => fitsAnywhere(state.board, shape));
+}
+
+/** Cheap necessary condition for the turn to be finishable: some block has a move, or the lone tray
+ *  block can be stashed into the empty side slot. canFinishTurn() is the exact test. */
 export function anyMoves(state, cfg = DEFAULTS) {
   for (const s of sources(state)) if (blockHasMove(state, getBlock(state, s), cfg)) return true;
   return trayCount(state) === 1 && !state.side;
 }
+
+export const MAX_SEARCH_NODES = 60000;
+
+/**
+ * Exact test: can the current turn still be finished? The turn ends when the tray is empty. The side
+ * slot absorbs at most one leftover block (stash into an empty slot, or swap; placing the side block
+ * frees the slot), so the turn can be finished iff all but at most one of the tray + side blocks can be
+ * placed in some order, counting the lines each placement clears and the rotation points those earn.
+ * Depth-first search over placements with a transposition set; if `maxNodes` placements are explored
+ * without an answer the position is assumed playable (returns true).
+ */
+export function canFinishTurn(state, cfg = DEFAULTS, maxNodes = MAX_SEARCH_NODES, stats = null) {
+  const blocks = allBlocks(state);
+  if (stats) stats.nodes = 0;
+  if (blocks.length <= 1) return true;
+  const n = state.board.length;
+  const seen = new Set();
+  let nodes = 0;
+  const rec = (board, pts, rem) => {
+    if (rem.length <= 1) return true;
+    if (++nodes > maxNodes) return true;
+    const key = boardKey(board) + '|' + pts + '|' + rem.map(b => b.id).sort((a, b) => a - b).join(',');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    const tried = new Set(); // identical blocks (same type and dealt shape) need only be tried once per level
+    for (let i = 0; i < rem.length; i++) {
+      const b = rem[i];
+      const sig = b.type + ':' + shapeKey(dealtShapeOf(b));
+      if (tried.has(sig)) continue;
+      tried.add(sig);
+      const rest = rem.filter((_, j) => j !== i);
+      for (const { shape, cost } of placeableShapes(b, pts, cfg)) {
+        const w = shape[0].length, hgt = shape.length;
+        for (let y = 0; y + hgt <= n; y++) {
+          for (let x = 0; x + w <= n; x++) {
+            if (!canPlace(board, shape, x, y)) continue;
+            const c = commit(board, shape, x, y, b.type);
+            const lines = c.rows.length + c.cols.length;
+            if (rec(c.board, pts - cost + lines * cfg.rotationPointsPerLine, rest)) return true;
+          }
+        }
+      }
+    }
+    return false;
+  };
+  const ok = rec(state.board, state.rotPoints, blocks);
+  if (stats) { stats.nodes = nodes; stats.exhausted = nodes > maxNodes; }
+  return ok;
+}
+
+/** Game over = the current turn can no longer be finished. */
+export function isGameOver(state, cfg = DEFAULTS) { return !canFinishTurn(state, cfg); }
 
 export function canPlaceBlock(state, source, x, y, cfg = DEFAULTS) {
   const b = getBlock(state, source);
@@ -169,14 +265,16 @@ export function dealTray(state, cfg = DEFAULTS) {
   return { ...state, tray, deals: state.deals + 1, nextId };
 }
 
-export function newGame(seed, cfg = DEFAULTS) {
+/** New game. `carryRotationPoints` = rotation points brought over from the previous game. */
+export function newGame(seed, cfg = DEFAULTS, carryRotationPoints = 0) {
   const n = cfg.gridSize;
+  const carry = Math.max(0, Math.floor(Number(carryRotationPoints) || 0));
   let s = {
     seed, board: emptyBoard(n), tray: Array(TRAY_SIZE).fill(null), side: null,
-    score: 0, rotPoints: cfg.startRotationPoints ?? 0, deals: 0, nextId: 1, over: false,
+    score: 0, rotPoints: (cfg.startRotationPoints ?? 0) + carry, deals: 0, nextId: 1, over: false,
   };
   s = dealTray(s, cfg);
-  s.over = !anyMoves(s, cfg);
+  s.over = isGameOver(s, cfg);
   return s;
 }
 
@@ -191,7 +289,7 @@ function enforceAffordable(state, cfg) {
 function settle(state, cfg) {
   let s = enforceAffordable(state, cfg);
   if (trayCount(s) === 0) s = dealTray(s, cfg);
-  s.over = !anyMoves(s, cfg);
+  s.over = isGameOver(s, cfg);
   return s;
 }
 
@@ -211,17 +309,7 @@ export function place(state, source, x, y, cfg = DEFAULTS) {
   if (cost > state.rotPoints) return null;
   if (!canPlace(state.board, shape, x, y)) return null;
 
-  const n = state.board.length;
-  const board = state.board.map(r => r.slice());
-  const placedCells = cells(shape).map(([dx, dy]) => [x + dx, y + dy]);
-  for (const [bx, by] of placedCells) board[by][bx] = block.type;
-
-  const { rows, cols } = fullLines(board);
-  const clearedCells = [];
-  for (const r of rows) for (let cx = 0; cx < n; cx++) clearedCells.push([cx, r, board[r][cx]]);
-  for (const c of cols) for (let cy = 0; cy < n; cy++) if (!rows.includes(cy)) clearedCells.push([c, cy, board[cy][c]]);
-  for (const [cx, cy] of clearedCells) board[cy][cx] = null;
-
+  const { board, placedCells, rows, cols, clearedCells } = commit(state.board, shape, x, y, block.type);
   const lines = rows.length + cols.length;
   const placePts = placedCells.length;
   const clearPts = clearedCells.length * lines * cfg.clearMultiplier;

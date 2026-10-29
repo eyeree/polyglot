@@ -1,9 +1,14 @@
 .board {
   --cw: 50px; --ch: 70px;
   background: var(--felt, #1f6b3a);
-  position: relative; overflow: hidden; touch-action: none;
+  position: relative; touch-action: none;
+  overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
   background-image: radial-gradient(ellipse at 50% 30%, #fff1, transparent 70%);
+  background-attachment: local;
 }
+/* Everything on the felt lives in this layer, which grows with the tallest column so the board scrolls
+   instead of squeezing cards together. */
+.board .layer { position: relative; width: 100%; min-height: 100%; }
 .bottombar {
   display: flex; gap: 6px; padding: 6px 8px calc(6px + var(--safe-bottom)); background: var(--bg-2);
   border-top: 1px solid #0006; flex: 0 0 auto; justify-content: center; flex-wrap: wrap;

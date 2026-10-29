@@ -3,7 +3,7 @@ import { h, $, clear, modal, confirm, toast, settingsPanel, drawer } from '../sh
 import { onPress } from '../shared/pointer.js';
 import { makeSettings, load, save } from '../shared/storage.js';
 import { randomSeed } from '../shared/rng.js';
-import { DEFAULTS, SUITS, RANKS } from './config.js';
+import { DEFAULTS, SUITS, RANKS, MIN_OVERLAP_UP } from './config.js';
 import * as G from './game.js';
 import { GameTree } from './tree.js';
 import { SolverPool } from './solver-client.js';
@@ -13,8 +13,9 @@ const settings = makeSettings('yukon.settings', DEFAULTS);
 const rules = () => ({ kingsOnlyToEmpty: !!settings.get('kingsOnlyToEmpty') });
 
 const SETTINGS_SCHEMA = [
-  { key: 'cardScale', label: 'Card size', type: 'range', min: 0.7, max: 1, step: 0.02 },
-  { key: 'overlapUp', label: 'Face-up overlap', type: 'range', min: 0.18, max: 0.5, step: 0.01, help: 'Vertical offset between face-up cards (fraction of card height)' },
+  { key: 'fitCards', label: 'Column to fit without scrolling', type: 'range', min: 8, max: 24, step: 1, help: 'Face-up cards per column that must fit on screen; cards are sized to suit, longer columns scroll' },
+  { key: 'cardScale', label: 'Card size', type: 'range', min: 0.5, max: 1, step: 0.02, help: 'Extra shrink on top of the fitted size' },
+  { key: 'overlapUp', label: 'Face-up overlap', type: 'range', min: MIN_OVERLAP_UP, max: 0.5, step: 0.01, help: 'Vertical offset between face-up cards (fraction of card height); never squeezed, so the corner stays readable' },
   { key: 'overlapDown', label: 'Face-down overlap', type: 'range', min: 0.06, max: 0.3, step: 0.01 },
   { key: 'feltColor', label: 'Table colour', type: 'color' },
   { key: 'backColor', label: 'Card back colour', type: 'color' },
@@ -42,23 +43,42 @@ const pool = new SolverPool(() => settings.get('solverWorkers'));
 
 const board = $('#board');
 const statEl = $('#stat');
+let layer = null;                // scrolling layer inside the board that holds every felt element
 
 // ---------------------------------------------------------------- persistence
 function persist() {
   save(SAVE_KEY, tree.toJSON());
 }
+/** Every card exactly once across the columns and foundations. */
+function validState(s) {
+  if (!s || !Array.isArray(s.cols) || s.cols.length !== 7 || !Array.isArray(s.found) || s.found.length !== 4) return false;
+  const seen = new Set();
+  for (const col of s.cols) for (const c of col) { if (!Number.isInteger(c) || c < 0 || c > 51 || seen.has(c)) return false; seen.add(c); }
+  for (let suit = 0; suit < 4; suit++) for (let r = 0; r <= s.found[suit]; r++) { const c = suit * 13 + r; if (seen.has(c)) return false; seen.add(c); }
+  return seen.size === 52;
+}
+
 function restore() {
   const o = load(SAVE_KEY);
   if (!o || !o.nodes) return false;
-  try { tree = GameTree.fromJSON(o); tree.rules = rules(); return true; } catch { return false; }
+  try {
+    tree = GameTree.fromJSON(o);
+    tree.rules = rules();
+    if (!validState(tree.state)) throw new Error('corrupt save');
+    return true;
+  } catch { return false; }
 }
 
 // ---------------------------------------------------------------- layout & rendering
 function computeLayout() {
   const W = board.clientWidth, H = board.clientHeight;
   const gap = Math.max(3, Math.round(W * 0.012));
-  const maxCw = Math.floor((W - gap * 8) / 7);
-  const cw = Math.max(24, Math.floor(maxCw * settings.get('cardScale')));
+  const byWidth = Math.floor((W - gap * 8) / 7);
+  // Height limit: the foundation row plus a column of `fitCards` face-up cards must fit without scrolling.
+  const u = Math.max(MIN_OVERLAP_UP, settings.get('overlapUp'));
+  const n = Math.max(1, Number(settings.get('fitCards')) || DEFAULTS.fitCards);
+  const byHeight = Math.floor((H - gap * 4) / (2 + (n - 1) * u) / 1.4);
+  const cw = Math.max(24, Math.floor(Math.min(byWidth, byHeight) * settings.get('cardScale')));
   const ch = Math.round(cw * 1.4);
   const x0 = Math.floor((W - (cw * 7 + gap * 6)) / 2);
   const foundY = gap;
@@ -69,16 +89,18 @@ function computeLayout() {
 
 function buildBoard() {
   clear(board);
+  layer = h('div.layer');
+  board.append(layer);
   cardEls = new Map();
-  for (let s = 0; s < 4; s++) board.append(h('div.slot.foundation', { data: { suit: s }, text: SUITS[s] }));
-  for (let c = 0; c < 7; c++) board.append(h('div.colzone', { data: { col: c } }));
-  board.append(h('div.board-info#info'));
+  for (let s = 0; s < 4; s++) layer.append(h('div.slot.foundation', { data: { suit: s }, text: SUITS[s] }));
+  for (let c = 0; c < 7; c++) layer.append(h('div.colzone', { data: { col: c } }));
+  layer.append(h('div.board-info#info'));
   for (let c = 0; c < 52; c++) {
     const el = h('div.card' + (G.isRed(c) ? '.red' : ''), { data: { card: c } },
       h('div.corner', {}, h('span', { text: RANKS[G.rank(c)] }), h('span.s', { text: SUITS[G.suit(c)] })),
       h('div.pip', { text: SUITS[G.suit(c)] }));
     cardEls.set(c, el);
-    board.append(el);
+    layer.append(el);
   }
 }
 
@@ -102,7 +124,7 @@ function render(animate = true) {
   for (let c = 0; c < 7; c++) {
     const z = board.querySelector(`.colzone[data-col="${c}"]`);
     z.style.transform = `translate(${L.colX(c)}px, ${colTop}px)`;
-    z.style.width = cw + 'px'; z.style.height = Math.max(ch, avail) + 'px';
+    z.style.width = cw + 'px';
   }
   const info = $('#info');
   info.style.transform = `translate(${L.colX(0)}px, ${L.foundY}px)`;
@@ -121,23 +143,29 @@ function render(animate = true) {
       newPos.set(c, { x: L.colX(3 + suit), y: L.foundY, col: 'F', idx: r, z: r + 1, down: false });
     }
   }
-  const upOff0 = Math.round(ch * settings.get('overlapUp'));
-  const downOff0 = Math.round(ch * settings.get('overlapDown'));
+  // Offsets are never squeezed (the rank + suit corner must stay visible); a column taller than the
+  // board makes the layer, and so the board, scroll.
+  const uOff = Math.round(ch * Math.max(MIN_OVERLAP_UP, settings.get('overlapUp')));
+  const dOff = Math.round(ch * settings.get('overlapDown'));
+  let bottom = colTop + ch;
   for (let i = 0; i < 7; i++) {
     const col = s.cols[i];
-    const nDown = s.down[i], nUp = col.length - nDown;
-    let dOff = downOff0, uOff = upOff0;
-    const needed = nDown * dOff + Math.max(0, nUp - 1) * uOff + ch;
-    if (needed > avail && needed > ch) { const k = Math.max(0, (avail - ch) / (needed - ch)); dOff = Math.floor(dOff * k); uOff = Math.floor(uOff * k); }
+    const nDown = s.down[i];
     let y = colTop;
     for (let j = 0; j < col.length; j++) {
       newPos.set(col[j], { x: L.colX(i), y, col: i, idx: j, z: j + 1, down: j < nDown, dOff, uOff });
+      bottom = Math.max(bottom, y + ch);
       y += j < nDown ? dOff : uOff;
     }
   }
+  const layerH = Math.max(L.H, bottom + gap);
+  layer.style.height = layerH + 'px';
+  for (let c = 0; c < 7; c++) board.querySelector(`.colzone[data-col="${c}"]`).style.height = Math.max(avail, layerH - colTop - gap) + 'px';
 
   for (const [c, el] of cardEls) {
     const p = newPos.get(c);
+    if (!p) { el.style.display = 'none'; continue; } // not in this state (should not happen; never blank the board)
+    el.style.display = '';
     const old = positions.get(c);
     const moved = !old || old.x !== p.x || old.y !== p.y;
     el.classList.toggle('notransition', !animate);
@@ -188,6 +216,7 @@ function newGame(seed = randomSeed()) {
   tree = new GameTree(seed, rules());
   selected = null;
   positions = new Map();
+  board.scrollTop = 0;
   render(false);
   persist();
   scheduleAuto();
@@ -287,12 +316,17 @@ function destinationAt(target, x, y) {
   if (card && card.p.col === 'F') return 'F';
   const z = target?.closest?.('.colzone');
   if (z) return Number(z.dataset.col);
-  return destinationByPoint(x, y);
+  return destinationByPoint(...layerPoint(x, y));
 }
 
-function destinationByPoint(x, y) {
+/** Client coordinates -> coordinates inside the (scrolled) board layer. */
+function layerPoint(clientX, clientY) {
   const r = board.getBoundingClientRect();
-  const bx = x - r.left, by = y - r.top;
+  return [clientX - r.left + board.scrollLeft, clientY - r.top + board.scrollTop];
+}
+
+/** Destination under a point given in layer coordinates. */
+function destinationByPoint(bx, by) {
   if (by < L.colTop - L.gap && bx >= L.colX(3) - L.gap) return 'F';
   let best = null, bestD = Infinity;
   for (let c = 0; c < 7; c++) {
@@ -343,11 +377,15 @@ onPress(board, {
   },
   onDragStart(i) {
     const card = cardAt(i.downTarget);
-    if (!card || card.p.col === 'F' || card.p.down) return false;
+    if (!card || card.p.col === 'F' || card.p.down) {
+      // Not a movable card: dragging the felt (or a face-down card) scrolls a board taller than the screen.
+      drag = { scroll: true, top0: board.scrollTop };
+      return true;
+    }
     clearTimeout(autoTimer);
     const col = tree.state.cols[card.p.col];
     const cards = col.slice(card.p.idx);
-    drag = { col: card.p.col, idx: card.p.idx, cards };
+    drag = { col: card.p.col, idx: card.p.idx, cards, scroll0: board.scrollTop, dx: 0, dy: 0, clientY: i.clientY };
     cards.forEach((c, k) => { const el = cardEls.get(c); el.classList.add('dragging'); el.style.zIndex = 500 + k; });
     selected = null;
     board.querySelectorAll('.selected').forEach(e => e.classList.remove('selected'));
@@ -355,24 +393,63 @@ onPress(board, {
   },
   onDragMove(i, dx, dy) {
     if (!drag) return;
-    for (const c of drag.cards) { const p = positions.get(c); cardEls.get(c).style.transform = `translate(${p.x + dx}px, ${p.y + dy}px)`; }
+    if (drag.scroll) { board.scrollTop = drag.top0 - dy; return; }
+    drag.dx = dx; drag.dy = dy; drag.clientY = i.clientY;
+    positionDragged();
+    edgeAutoScroll();
   },
   onDragEnd(i, dx, dy, cancelled) {
     if (!drag) return;
     const d = drag; drag = null;
+    stopAutoScroll();
+    if (d.scroll) return;
     if (!cancelled) {
-      // drop target: by the top card's centre position, falling back to pointer
+      // drop target: by the top card's centre position, falling back to the pointer
       const p0 = positions.get(d.cards[0]);
-      const r = board.getBoundingClientRect();
-      const cx = r.left + p0.x + dx + L.cw / 2, cy = r.top + p0.y + dy + L.ch / 2;
-      let dest = destinationByPoint(cx, cy);
-      if (dest === d.col) dest = destinationByPoint(i.clientX, i.clientY);
+      const sdy = dy + (board.scrollTop - d.scroll0);
+      let dest = destinationByPoint(p0.x + dx + L.cw / 2, p0.y + sdy + L.ch / 2);
+      if (dest === d.col) dest = destinationByPoint(...layerPoint(i.clientX, i.clientY));
       if (dest !== d.col && tryMove(d.col, d.idx, dest)) return;
     }
     render(true);
     scheduleAuto();
   },
 });
+
+/** Keep the dragged cards under the finger, allowing for any scrolling since the drag began. */
+function positionDragged() {
+  if (!drag || drag.scroll) return;
+  const sdy = drag.dy + (board.scrollTop - drag.scroll0);
+  for (const c of drag.cards) { const p = positions.get(c); cardEls.get(c).style.transform = `translate(${p.x + drag.dx}px, ${p.y + sdy}px)`; }
+}
+
+// Holding a dragged card near the top or bottom edge scrolls the board under it.
+const EDGE = 40;                 // px band at each edge
+let autoScrollRaf = null;
+function edgeVelocity() {
+  if (!drag || drag.scroll) return 0;
+  const r = board.getBoundingClientRect(), y = drag.clientY;
+  if (y < r.top + EDGE) return -(r.top + EDGE - y) / EDGE;
+  if (y > r.bottom - EDGE) return (y - (r.bottom - EDGE)) / EDGE;
+  return 0;
+}
+function edgeAutoScroll() {
+  if (autoScrollRaf || !edgeVelocity()) return;
+  const step = () => {
+    autoScrollRaf = null;
+    const v = edgeVelocity();
+    if (!v) return;
+    // Cap at the layer's own height: cards dragged past the bottom edge extend the scrollable area.
+    const maxTop = Math.max(0, layer.offsetHeight - board.clientHeight);
+    const before = board.scrollTop;
+    board.scrollTop = Math.max(0, Math.min(maxTop, before + v * 12));
+    if (board.scrollTop === before) return; // reached the end
+    positionDragged();
+    autoScrollRaf = requestAnimationFrame(step);
+  };
+  autoScrollRaf = requestAnimationFrame(step);
+}
+function stopAutoScroll() { if (autoScrollRaf) cancelAnimationFrame(autoScrollRaf); autoScrollRaf = null; }
 
 $('#btn-undo').onclick = undo;
 $('#btn-redo').onclick = redo;
@@ -433,6 +510,7 @@ function showHelp() {
       h('p', {}, h('b', {}, 'Tree: '), 'every move you make is a node. Undo keeps the branch, so playing a different move from an earlier position creates a new branch. ', h('b', {}, '⤺ Branch'), ' jumps back to the last position where you had a real choice (forced foundation moves don\'t count). Alternatives you never tried are listed as dimmed "+" rows; tap one to play it from that position.'),
       h('p', {}, h('b', {}, 'Solve: '), 'searches from the current position. ✓ means a winning line exists (it is added to the tree so you can follow it), ✗ means every continuation has been exhausted and loses, ? means the budget ran out. "Analyse choices" on a tree row solves each alternative so you can see which choice keeps the game winnable.'),
       h('p', {}, h('b', {}, 'Rows: '), '● current · ○ on your path · ⚖ a destination with more than one candidate card · ★ won · ⊘ no moves left.'),
+      h('p', {}, h('b', {}, 'Long columns: '), 'cards are never squeezed together, so a column taller than the screen scrolls. Drag on the felt or a face-down card (or use the wheel) to scroll; holding a dragged card near the top or bottom edge scrolls too. Settings sets how many face-up cards must fit without scrolling.'),
     ),
   });
 }
