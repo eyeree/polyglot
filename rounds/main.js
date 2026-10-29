@@ -1,6 +1,6 @@
 // Rounds UI controller. Rendering + input only; rules live in rules.js, state changes in game.js, opponents in ai.js.
 import { h, $, clear, modal, confirm, toast, settingsPanel, drawer } from '../shared/ui.js';
-import { onPress } from '../shared/pointer.js';
+import { onPress, elementAt } from '../shared/pointer.js';
 import { makeSettings, load, save } from '../shared/storage.js';
 import { makeRng, randomSeed } from '../shared/rng.js';
 import { DEFAULTS, STRATEGIES, AI_NAMES, COLORS } from './config.js';
@@ -9,6 +9,7 @@ import * as G from './game.js';
 import * as AI from './ai.js';
 
 const SAVE_KEY = 'rounds.save';
+const UI_KEY = 'rounds.ui';         // cards you have set aside in your phase slots (not part of the game state)
 const settings = makeSettings('rounds.settings', DEFAULTS);
 const rulesOpts = () => ({ allowSameNumberSets: !!settings.get('allowSameNumberSets'), goOutByHit: !!settings.get('goOutByHit') });
 
@@ -21,8 +22,9 @@ const SETTINGS_SCHEMA = [
   { key: 'strat4', label: 'Seat 4 strategy', type: 'select', options: stratOptions },
   { key: 'strat5', label: 'Seat 5 strategy', type: 'select', options: stratOptions },
   { key: 'aiDelayMs', label: 'AI delay (ms)', type: 'range', min: 0, max: 2000, step: 100, help: 'Pause between the visible steps of an opponent\'s turn' },
-  { key: 'cardScale', label: 'Card size', type: 'range', min: 0.7, max: 1.3, step: 0.05 },
+  { key: 'cardScale', label: 'Card size', type: 'range', min: 0.7, max: 1.3, step: 0.05, help: 'Upper limit; cards shrink to fit the screen' },
   { key: 'sortHand', label: 'Sort hand by', type: 'select', options: [{ value: 'number', label: 'Number' }, { value: 'color', label: 'Colour' }, { value: 'none', label: 'Draw order' }] },
+  { key: 'promptLayDown', label: 'Ask to lay down when the slots are complete', type: 'bool' },
   { key: 'allowSameNumberSets', label: 'Two sets may share a number', type: 'bool', help: 'e.g. phase 1 with 5-5-5 and 5-5-5' },
   { key: 'goOutByHit', label: 'Go out by hitting the last card', type: 'bool', help: 'Off: a hand only ends with a discard' },
   { key: 'showOpponentHands', label: 'Show opponent hands', type: 'bool', help: 'Cheat / debug' },
@@ -30,23 +32,29 @@ const SETTINGS_SCHEMA = [
 
 // ---------------------------------------------------------------- state
 let state = null;
-const selected = new Set();       // card ids in the player's hand
+const selected = new Set();       // card ids selected in the player's hand (not in the slots)
+let staged = [];                  // staged[slotIndex] = [cardId]: cards set aside in your phase slots
 let aiRun = 0;                    // token: bumped to cancel a running AI turn (new game / restore)
 let aiBusy = false;
 let endShownFor = null;           // "hand:stage" key of the summary modal already shown
+let layPromptedFor = null;        // signature of the staged cards the lay-down prompt was last shown for
 let logDrawer = null;
 const HUMAN = 0;
 
-const oppsEl = $('#opps'), deckEl = $('#deck'), discardEl = $('#discard'), logEl = $('#log'), tableEl = $('#table');
-const phaseEl = $('#phase'), hintEl = $('#hint'), handEl = $('#hand'), actionsEl = $('#actions'), statEl = $('#stat');
-const main = $('.p10');
+const oppsEl = $('#opps'), deckEl = $('#deck'), discardEl = $('#discard'), logEl = $('#log');
+const phaseEl = $('#phase'), hintEl = $('#hint'), stageEl = $('#stage'), handEl = $('#hand'), actionsEl = $('#actions'), statEl = $('#stat');
+const main = $('.p10'), oppsBar = $('.opps-bar'), meHead = $('#me-head'), pilesEl = $('#piles');
+const LANDSCAPE = window.matchMedia('(orientation: landscape) and (min-width: 640px)');
 
 // ---------------------------------------------------------------- persistence
 function persist() { save(SAVE_KEY, state); }
+function persistUi() { save(UI_KEY, { seed: state.seed, hand: state.hand, staged }); }
 function restore() {
   const s = load(SAVE_KEY);
   if (!G.isValidState(s)) return false;
   state = s;
+  const ui = load(UI_KEY);
+  staged = ui && ui.seed === state.seed && ui.hand === state.hand && Array.isArray(ui.staged) ? ui.staged.map(a => Array.isArray(a) ? a.map(Number) : []) : [];
   return true;
 }
 
@@ -55,6 +63,9 @@ const isHumanTurn = () => state.turn === HUMAN && (state.stage === 'draw' || sta
 const me = () => state.players[HUMAN];
 const nameOf = (i) => state.players[i].name;
 const profile = (p) => STRATEGIES[p.ai] || null;
+const compsOf = (p) => (p.phase > 10 ? [] : R.phase(p.phase).comps);
+const compLabel = (c) => c.type === 'set' ? `Set of ${c.n}` : c.type === 'run' ? `Run of ${c.n}` : `${c.n} of one colour`;
+const groupsOf = (i) => state.table.filter(g => g.owner === i);
 
 function sortedHand(ids) {
   const mode = settings.get('sortHand');
@@ -78,25 +89,87 @@ function cardEl(c, cls = '') {
   return h(`div.card${kind}${cls}`, { data: { id: c.id } }, h('span.k', { text: label }), h('span.n', { text: label }), h('span.k.b', { text: label }));
 }
 
-function groupKindLabel(g) {
-  if (g.type === 'set') return `set of ${g.key}s`;
-  if (g.type === 'run') return `run ${g.lo}–${g.hi}`;
-  return `${g.key}s`;
-}
-
-/** Table group element; wilds in runs show the number they stand for. */
-function groupEl(g, { target = false } = {}) {
-  const cardsRow = h('div.cards', {}, g.cards.map((id, i) => {
-    const el = cardEl(R.card(id), '.small');
+/** Cards of a laid-down group; wilds in runs show the number they stand for. */
+function groupCards(g, cls = '') {
+  return g.cards.map((id, i) => {
+    const el = cardEl(R.card(id), cls);
     if (g.type === 'run' && R.isWild(R.card(id))) el.append(h('span.as', { text: String(R.runValueAt(g, i)) }));
     return el;
-  }));
-  return h('div.group' + (g.owner === HUMAN ? '.mine' : '') + (target ? '.target' : ''), { data: { group: g.id } },
-    h('div.owner', {}, h('span', { text: nameOf(g.owner) }), h('span.kind', { text: groupKindLabel(g) })),
-    cardsRow);
+  });
+}
+
+/** A fan of face-down cards standing for a hand of n cards. */
+function fanEl(n) {
+  const step = n <= 1 ? 0 : Math.max(2, Math.min(5, Math.floor(60 / (n - 1))));
+  return h('div.fan', { style: { '--step': step + 'px' }, title: `${n} card${n === 1 ? '' : 's'}`, 'aria-label': `${n} cards` },
+    n ? Array.from({ length: n }, () => h('div.card.back')) : h('span.none', { text: 'no cards' }));
 }
 
 const selectedCard = () => (selected.size === 1 ? R.card([...selected][0]) : null);
+
+// ---------------------------------------------------------------- staging (your phase slots)
+const stagedIds = () => staged.flat();
+const stagedSet = () => new Set(stagedIds());
+
+/** Keep the slot arrays in step with the current phase and hand. */
+function syncStaged() {
+  const p = me();
+  const comps = compsOf(p);
+  if (p.laidDown || !comps.length) { staged = []; return; }
+  const inHand = new Set(p.hand);
+  staged = comps.map((_, k) => (staged[k] || []).filter(id => inHand.has(id)));
+}
+
+/** Do the cards in one slot form a valid group for that component (display only; the rules decide at lay-down)? */
+function slotComplete(comp, ids) {
+  const cs = R.cards(ids);
+  if (cs.length < comp.n || cs.some(R.isSkip) || !cs.some(R.isNum)) return false;
+  const nums = cs.filter(R.isNum);
+  if (comp.type === 'set') return nums.every(c => c.num === nums[0].num);
+  if (comp.type === 'color') return nums.every(c => c.color === nums[0].color);
+  const vals = [...new Set(nums.map(c => c.num))].sort((a, b) => a - b);
+  if (vals.length !== nums.length) return false;
+  const span = vals[vals.length - 1] - vals[0] + 1;
+  const wilds = cs.length - nums.length;
+  return span - nums.length <= wilds && cs.length <= 12;   // wilds fill the gaps; the rest extend the ends
+}
+
+function stageCards(slot, ids) {
+  syncStaged();
+  if (slot < 0 || slot >= staged.length) return;
+  const set = new Set(ids);
+  staged = staged.map(a => a.filter(id => !set.has(id)));
+  staged[slot].push(...ids);
+  for (const id of ids) selected.delete(id);
+  afterStageChange();
+}
+
+function unstage(ids) {
+  const set = new Set(ids);
+  staged = staged.map(a => a.filter(id => !set.has(id)));
+  afterStageChange();
+}
+
+function afterStageChange() {
+  renderMe(); renderTargets(); renderActions();
+  persistUi();
+  maybePromptLayDown();
+}
+
+/** When the cards in your slots complete the phase during your turn, offer to lay them down (once per arrangement). */
+async function maybePromptLayDown() {
+  if (!settings.get('promptLayDown')) return;
+  const p = me();
+  if (!isHumanTurn() || state.stage !== 'play' || p.laidDown || p.phase > 10) return;
+  const ids = stagedIds();
+  if (!ids.length || !R.canLayDown(R.cards(ids), p.phase, state.opts)) return;
+  if (!state.opts.goOutByHit && ids.length === p.hand.length) return;
+  const sig = `${state.hand}:${p.hand.length}:${[...ids].sort((a, b) => a - b).join(',')}`;
+  if (layPromptedFor === sig) return;
+  layPromptedFor = sig;
+  const ok = await confirm(`The cards in your slots complete phase ${p.phase} (${R.phase(p.phase).label}). Lay them down now?`, { ok: 'Lay down', cancel: 'Not yet', title: 'Phase complete' });
+  if (ok && isHumanTurn() && state.stage === 'play') layDownIds(ids);
+}
 
 // ---------------------------------------------------------------- rendering
 function render() {
@@ -104,9 +177,21 @@ function render() {
   statEl.textContent = `Hand ${state.hand}`;
   renderOpponents();
   renderPiles();
-  renderTable();
   renderMe();
+  renderTargets();
   renderActions();
+  fitCards();
+}
+
+/** Phase slot: the laid-down group if there is one, otherwise empty (or, for you, the cards you set aside). */
+function slotEl(comp, k, { group = null, cards = [], owner = null } = {}) {
+  const cls = group ? '.filled' : cards.length ? '' : '.empty';
+  const body = group ? groupCards(group, '.small') : cards.map(id => cardEl(R.card(id), selected.has(id) ? '.sel' : ''));
+  const data = { slot: k, owner };
+  if (group) data.group = group.id;
+  return h('div.slot' + cls, { data },
+    h('div.slot-cards', { style: { '--n': String(Math.max(1, body.length)) } }, body),
+    h('div.slot-label', { text: compLabel(comp) }));
 }
 
 function renderOpponents() {
@@ -115,7 +200,8 @@ function renderOpponents() {
     if (i === HUMAN) return;
     const prof = profile(p);
     const active = state.turn === i && (state.stage === 'draw' || state.stage === 'play');
-    const groups = state.table.filter(g => g.owner === i);
+    const groups = groupsOf(i);
+    const comps = compsOf(p);
     const el = h('div.opp' + (active ? '.active' : '') + (p.skipped ? '.skipped' : '') + (p.laidDown ? '.done' : ''), { data: { player: i } },
       h('div.opp-head', {},
         h('span.name', { text: p.name }),
@@ -123,17 +209,16 @@ function renderOpponents() {
         p.skipped ? h('span.skipmark', { text: 'SKIPPED' }) : null),
       h('div.opp-meta', {},
         h('span', { html: p.phase > 10 ? '<b>Done</b>' : `Phase <b>${p.phase}</b>` }),
-        h('span', { html: `<b>${p.hand.length}</b> card${p.hand.length === 1 ? '' : 's'}` }),
-        h('span', { html: `<b>${p.score}</b> pts` })),
-      h('div.opp-groups', {}, groups.length
-        ? groups.map(g => h('div.mini', {}, g.cards.map(id => cardEl(R.card(id), '.small'))))
-        : h('span.muted', { style: { fontSize: '11px' }, text: p.laidDown ? 'laid down' : 'not laid down' })),
+        h('span', { html: `<b>${p.score}</b> pts` }),
+        h('span.spacer'),
+        fanEl(p.hand.length)),
+      comps.length ? h('div.slots', {}, comps.map((c, k) => slotEl(c, k, { group: groups[k] || null, owner: i }))) : null,
       settings.get('showOpponentHands') ? h('div.opp-hand', {}, sortedHand(p.hand).map(id => cardEl(R.card(id), '.small'))) : null,
     );
     oppsEl.append(el);
   });
   const act = oppsEl.querySelector('.opp.active');
-  if (act) act.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+  if (act && !LANDSCAPE.matches) act.scrollIntoView({ inline: 'nearest', block: 'nearest' });
 }
 
 function renderPiles() {
@@ -159,29 +244,44 @@ function renderPiles() {
   lines.forEach((l, i) => logEl.append(h('div' + (i === lines.length - 1 ? '.latest' : ''), { text: l })));
 }
 
-function renderTable() {
-  clear(tableEl);
+/** Highlight the groups the selected card could be hit onto. */
+function renderTargets() {
   const sel = selectedCard();
   const canTarget = isHumanTurn() && state.stage === 'play' && me().laidDown && sel;
-  for (const g of state.table) tableEl.append(groupEl(g, { target: !!canTarget && R.canHit(g, sel) }));
+  for (const el of main.querySelectorAll('.slot[data-group]')) {
+    const g = G.groupById(state, Number(el.dataset.group));
+    el.classList.toggle('target', !!(canTarget && g && R.canHit(g, sel)));
+  }
 }
 
 function renderMe() {
   const p = me();
-  phaseEl.textContent = R.phaseLabel(p.phase);
+  syncStaged();
+  phaseEl.textContent = p.phase > 10 ? 'Done' : `Phase ${p.phase}`;
   hintEl.className = 'hint';
   if (state.stage === 'handEnd' || state.stage === 'gameEnd') hintEl.textContent = state.stage === 'gameEnd' ? 'Game over' : 'Hand over';
-  else if (p.phase > 10) hintEl.textContent = '';
+  else if (p.phase > 10) hintEl.textContent = 'All phases done';
   else if (p.laidDown) { hintEl.textContent = 'Laid down ✓'; hintEl.classList.add('ok'); }
   else {
     const d = G.deficitOf(state, HUMAN);
     if (d.need === 0) { hintEl.textContent = 'Complete — lay it down!'; hintEl.classList.add('ok'); }
     else hintEl.textContent = `${d.need} card${d.need === 1 ? '' : 's'} away`;
   }
+  // phase slots: laid-down groups, or the cards you have set aside
+  clear(stageEl);
+  const comps = compsOf(p);
+  const groups = groupsOf(HUMAN);
+  comps.forEach((c, k) => {
+    const el = slotEl(c, k, p.laidDown ? { group: groups[k] || null, owner: HUMAN } : { cards: staged[k] || [], owner: HUMAN });
+    if (!p.laidDown && slotComplete(c, staged[k] || [])) el.classList.add('complete');
+    stageEl.append(el);
+  });
+  // hand: everything not set aside
   clear(handEl);
-  for (const id of [...selected]) if (!p.hand.includes(id)) selected.delete(id);   // drop stale selections
-  const ids = sortedHand(p.hand);
-  if (!ids.length) handEl.append(h('div.empty', { text: 'No cards' }));
+  const inSlots = stagedSet();
+  for (const id of [...selected]) if (!p.hand.includes(id) || inSlots.has(id)) selected.delete(id);   // drop stale selections
+  const ids = sortedHand(p.hand.filter(id => !inSlots.has(id)));
+  if (!ids.length) handEl.append(h('div.empty', { text: p.hand.length ? 'All cards are in your slots' : 'No cards' }));
   for (const id of ids) handEl.append(cardEl(R.card(id), selected.has(id) ? '.sel' : ''));
 }
 
@@ -204,9 +304,23 @@ function renderActions() {
     return;
   }
   const n = selected.size;
-  if (!p.laidDown && p.phase <= 10) actionsEl.append(h('button.btn#btn-lay', { text: 'Lay down', disabled: n === 0, onClick: doLayDown }));
+  if (!p.laidDown && p.phase <= 10) {
+    const ready = stagedIds().length > 0 && !!R.canLayDown(R.cards([...stagedIds(), ...selected]), p.phase, state.opts);
+    actionsEl.append(h('button.btn#btn-lay' + (ready ? '.btn-primary' : ''), { text: 'Lay down', disabled: n === 0 && !stagedIds().length, onClick: doLayDown }));
+  }
   if (p.laidDown) actionsEl.append(h('button.btn#btn-hit', { text: 'Hit', disabled: n !== 1, onClick: doHitPrompt }));
-  actionsEl.append(h('button.btn.btn-primary#btn-discard', { text: 'Discard', disabled: n !== 1, onClick: doDiscard }));
+  actionsEl.append(h('button.btn' + (p.laidDown || n === 1 ? '.btn-primary' : '') + '#btn-discard', { text: 'Discard', disabled: n !== 1, onClick: doDiscard }));
+}
+
+/** Size the cards in your slots and hand so both rows fit the space left by the other rows. */
+function fitCards() {
+  const max = Math.round(56 * (Number(settings.get('cardScale')) || 1));
+  const landscape = LANDSCAPE.matches;
+  const fixed = oppsBar.offsetHeight + meHead.offsetHeight + (landscape ? 0 : pilesEl.offsetHeight + actionsEl.offsetHeight);
+  const chrome = 72;   // slot label, paddings, the raised selected card
+  const avail = main.clientHeight - fixed - chrome;
+  const w = Math.max(30, Math.min(max, Math.floor(avail / 2.8)));
+  main.style.setProperty('--cw', w + 'px');
 }
 
 // ---------------------------------------------------------------- game flow
@@ -223,7 +337,8 @@ function startNewGame(seed = randomSeed()) {
   }
   aiRun++; aiBusy = false;
   selected.clear();
-  endShownFor = null;
+  staged = [];
+  endShownFor = null; layPromptedFor = null;
   state = G.newGame({ seed, players, opts: rulesOpts() });
   afterAction();
 }
@@ -232,8 +347,10 @@ function startNewGame(seed = randomSeed()) {
 function afterAction() {
   render();
   persist();
+  persistUi();
   checkHandEnd();
   scheduleAi();
+  maybePromptLayDown();
 }
 
 function gameInProgress() {
@@ -253,13 +370,19 @@ function doDraw(from) {
   }
 }
 
+/** Lay down the cards in your slots plus whatever is selected in your hand. */
 function doLayDown() {
   if (!isHumanTurn()) return;
-  const ids = [...selected];
-  if (!ids.length) { toast('Select the cards of your phase first'); return; }
+  const ids = [...stagedIds(), ...selected];
+  if (!ids.length) { toast('Put the cards of your phase in the slots (or select them) first'); return; }
+  layDownIds(ids);
+}
+
+function layDownIds(ids) {
   const r = G.layDown(state, ids);
   if (!r.ok) { toast(r.reason, 2600); return; }
   selected.clear();
+  staged = [];
   afterAction();
   if (state.stage === 'play') toast('Laid down! Hit cards onto any group, then discard.');
 }
@@ -331,12 +454,100 @@ function chooseSkipTarget(eligible) {
 }
 
 function toggleSelect(id) {
-  if (!isHumanTurn()) return;
   if (selected.has(id)) selected.delete(id); else selected.add(id);
   renderMe();
-  renderTable();
+  renderTargets();
   renderActions();
 }
+
+/** Tap on a phase slot (yours or an opponent's): hit a laid-down group, or move selected cards into your slot. */
+function onSlotTap(el) {
+  if (el.dataset.group) {
+    if (!isHumanTurn() || state.stage !== 'play') return;
+    if (!me().laidDown) { toast('Lay down your phase first, then you can hit'); return; }
+    if (selected.size !== 1) { toast('Select exactly one card to hit with'); return; }
+    doHit(Number(el.dataset.group));
+    return;
+  }
+  if (Number(el.dataset.owner) !== HUMAN) return;
+  if (!selected.size) { toast('Select cards in your hand, then tap a slot to set them aside'); return; }
+  stageCards(Number(el.dataset.slot), [...selected]);
+}
+
+// ---------------------------------------------------------------- drag: hand ⇄ slots
+let drag = null;   // { ids, ghost }
+function startDrag(i, ids) {
+  const c = R.card(ids[0]);
+  const ghost = cardEl(c, '.ghost');
+  ghost.style.setProperty('--w', main.style.getPropertyValue('--cw') || '56px');
+  if (ids.length > 1) ghost.append(h('span.cnt', { text: String(ids.length) }));
+  document.body.append(ghost);
+  drag = { ids, ghost };
+  moveDrag(i);
+  return true;
+}
+function moveDrag(i) {
+  if (!drag) return;
+  drag.ghost.style.left = i.clientX + 'px';
+  drag.ghost.style.top = i.clientY + 'px';
+  const over = elementAt(i.clientX, i.clientY, [drag.ghost]);
+  const slot = over?.closest?.('.stage .slot:not([data-group])');
+  for (const el of stageEl.querySelectorAll('.slot.dropping')) if (el !== slot) el.classList.remove('dropping');
+  slot?.classList.add('dropping');
+  handEl.classList.toggle('dropping', !slot && !!over?.closest?.('.hand-wrap'));
+}
+function endDrag(i, cancelled) {
+  if (!drag) return;
+  const { ids, ghost } = drag;
+  drag = null;
+  ghost.remove();
+  for (const el of stageEl.querySelectorAll('.slot.dropping')) el.classList.remove('dropping');
+  handEl.classList.remove('dropping');
+  if (cancelled) return;
+  const over = elementAt(i.clientX, i.clientY);
+  const slot = over?.closest?.('.stage .slot:not([data-group])');
+  if (slot) stageCards(Number(slot.dataset.slot), ids);
+  else if (over?.closest?.('.hand-wrap')) unstage(ids);
+}
+
+onPress(handEl, {
+  onTap(i) { const el = i.downTarget?.closest?.('.card'); if (el && el.dataset.id != null) toggleSelect(Number(el.dataset.id)); },
+  onDragStart(i) {
+    const el = i.downTarget?.closest?.('.card');
+    if (!el || el.dataset.id == null || me().laidDown) return false;
+    const id = Number(el.dataset.id);
+    return startDrag(i, selected.has(id) ? [...selected] : [id]);
+  },
+  onDragMove(i) { moveDrag(i); },
+  onDragEnd(i, dx, dy, cancelled) { endDrag(i, cancelled); },
+});
+onPress(stageEl, {
+  onTap(i) {
+    const card = i.downTarget?.closest?.('.card');
+    const slot = i.downTarget?.closest?.('.slot');
+    if (!slot) return;
+    if (card && card.dataset.id != null && !slot.dataset.group) { unstage([Number(card.dataset.id)]); return; }
+    onSlotTap(slot);
+  },
+  onDragStart(i) {
+    const card = i.downTarget?.closest?.('.card');
+    const slot = i.downTarget?.closest?.('.slot');
+    if (!card || card.dataset.id == null || !slot || slot.dataset.group) return false;
+    return startDrag(i, [Number(card.dataset.id)]);
+  },
+  onDragMove(i) { moveDrag(i); },
+  onDragEnd(i, dx, dy, cancelled) { endDrag(i, cancelled); },
+});
+onPress(oppsEl, {
+  onTap(i) { const slot = i.downTarget?.closest?.('.slot'); if (slot) onSlotTap(slot); },
+  preventDefault: false,
+});
+deckEl.addEventListener('click', () => doDraw('deck'));
+discardEl.addEventListener('click', () => doDraw('discard'));
+logEl.addEventListener('click', openLog);
+$('#btn-menu').addEventListener('click', showMenu);
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { selected.clear(); render(); } });
+window.addEventListener('resize', () => { if (state) fitCards(); });
 
 // ---------------------------------------------------------------- AI turns
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -418,28 +629,8 @@ async function showSummary() {
   }
   const v = await modal({ title: `Hand ${sum.hand} — ${nameOf(sum.outPlayer)} went out`, body: summaryTable(sum), dismissable: false,
     buttons: [{ label: 'Next hand', value: true, primary: true }] });
-  if (v && state.stage === 'handEnd') { G.nextHand(state); selected.clear(); afterAction(); }
+  if (v && state.stage === 'handEnd') { G.nextHand(state); selected.clear(); staged = []; layPromptedFor = null; afterAction(); }
 }
-
-// ---------------------------------------------------------------- input wiring
-onPress(handEl, {
-  onTap(i) { const el = i.downTarget?.closest?.('.card'); if (el && el.dataset.id != null) toggleSelect(Number(el.dataset.id)); },
-});
-onPress(tableEl, {
-  onTap(i) {
-    const el = i.downTarget?.closest?.('.group');
-    if (!el) return;
-    if (!isHumanTurn() || state.stage !== 'play') return;
-    if (!me().laidDown) { toast('Lay down your phase first, then you can hit'); return; }
-    if (selected.size !== 1) { toast('Select exactly one card to hit with'); return; }
-    doHit(Number(el.dataset.group));
-  },
-});
-deckEl.addEventListener('click', () => doDraw('deck'));
-discardEl.addEventListener('click', () => doDraw('discard'));
-logEl.addEventListener('click', openLog);
-$('#btn-menu').addEventListener('click', showMenu);
-window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { selected.clear(); render(); } });
 
 // ---------------------------------------------------------------- menu, settings, help, log
 async function showMenu() {
@@ -447,6 +638,7 @@ async function showMenu() {
     title: 'Rounds',
     body: h('div.muted', { text: `Seed ${state.seed} · hand ${state.hand} · ${state.players.length} players` }),
     buttons: [
+      { label: 'Exit', value: 'exit' },
       { label: 'Settings', value: 'settings' },
       { label: 'Help', value: 'help' },
       { label: 'Log', value: 'log' },
@@ -454,7 +646,8 @@ async function showMenu() {
       { label: 'New game', value: 'new', primary: true },
     ],
   });
-  if (choice === 'new') { if (!gameInProgress() || await confirm('Abandon the current game and start a new one?', { ok: 'New game' })) startNewGame(); }
+  if (choice === 'exit') location.href = '../';
+  else if (choice === 'new') { if (!gameInProgress() || await confirm('Abandon the current game and start a new one?', { ok: 'New game' })) startNewGame(); }
   else if (choice === 'seed') {
     const input = h('input', { type: 'number', value: state.seed, style: { width: '100%', padding: '8px', fontSize: '16px' } });
     const ok = await modal({ title: 'Game seed', body: h('div', {}, h('p.muted', { text: 'Same seed and settings = same deals.' }), input), buttons: [{ label: 'Cancel', value: false }, { label: 'Start', value: true, primary: true }] });
@@ -490,9 +683,10 @@ function showHelp() {
     title: 'How to play', wide: true,
     body: h('div.help', { style: { lineHeight: '1.5' } },
       h('p', {}, h('b', {}, 'Goal: '), 'complete phases 1–10 in order. A hand ends when someone has no cards left. Everyone who laid down their phase moves on; the rest repeat it. Cards left in hand count against you (1–9: 5, 10–12: 10, Skip: 15, Wild: 25). The game ends after a hand in which someone finished the final phase; lowest score among them wins.'),
-      h('p', {}, h('b', {}, 'Turn: '), 'draw from the deck or take the top discard (not a Skip) → optionally lay down your whole phase at once (select the cards, tap Lay down) → once laid down, hit any card that fits onto any group on the table (select one card, tap the group) → discard one card.'),
+      h('p', {}, h('b', {}, 'Turn: '), 'draw from the deck or take the top discard (not a Skip) → optionally lay down your whole phase at once → once laid down, hit any card that fits onto any group on the table (select one card, tap the group) → discard one card.'),
+      h('p', {}, h('b', {}, 'Phase slots: '), 'the labelled slots above your hand show what your phase needs. At any time, drag cards there (or select them and tap a slot) to set them aside; tap or drag a card back to return it to your hand. A slot turns green when its cards form a valid group, and when the slots hold a complete phase on your turn you are asked whether to lay it down. ', h('b', {}, 'Lay down'), ' plays the cards in your slots plus any selected in your hand. Opponents\' slots fill in as they lay down.'),
       h('p', {}, h('b', {}, 'Groups: '), 'set = same number, any colours · run = consecutive numbers, no wrap · colour = all one colour. Wilds stand in for anything; every group needs at least one real card. Discarding a Skip makes a player of your choice lose their next turn.'),
-      h('p', {}, h('b', {}, 'Hints: '), 'the line above your hand shows how many cards you are from completing your phase. Opponents each have a strategy badge: ', Object.values(STRATEGIES).map((s, i) => [i ? ', ' : '', h('b', { text: s.name })]), '. They all play well; the badges only change their priorities (points, defence, when to Skip whom).'),
+      h('p', {}, h('b', {}, 'Hints: '), 'the line above your slots shows how many cards you are from completing your phase. Opponents each have a strategy badge: ', Object.values(STRATEGIES).map((s, i) => [i ? ', ' : '', h('b', { text: s.name })]), '. They all play well; the badges only change their priorities (points, defence, when to Skip whom).'),
     ),
   });
 }
@@ -500,19 +694,22 @@ function showHelp() {
 // ---------------------------------------------------------------- boot
 window.__rounds = {
   get game() { return state; },
+  get staged() { return staged; },
   rules: R, ai: AI, G, settings, STRATEGIES,
   actions: {
     draw: (from = 'deck') => { const r = G.draw(state, from); if (r.ok) afterAction(); return r; },
-    layDown: (ids) => { const r = G.layDown(state, ids); if (r.ok) { selected.clear(); afterAction(); } return r; },
+    layDown: (ids) => { const r = G.layDown(state, ids); if (r.ok) { selected.clear(); staged = []; afterAction(); } return r; },
     hit: (id, groupId, end) => { const r = G.hit(state, id, groupId, end); if (r.ok) { selected.clear(); afterAction(); } return r; },
     discard: (id, target = null) => { const r = G.discard(state, id, target); if (r.ok) { selected.clear(); afterAction(); } return r; },
     nextHand: () => { const r = G.nextHand(state); if (r.ok) afterAction(); return r; },
     select: (id) => toggleSelect(id),
+    stage: (slot, ids) => stageCards(slot, ids),
+    unstage: (ids) => unstage(ids),
     newGame: (seed) => startNewGame(seed),
-    showSummary,
+    showSummary, menu: showMenu,
   },
   render, persist,
 };
 
 if (!restore()) startNewGame();
-else { render(); checkHandEnd(); scheduleAi(); }
+else { render(); checkHandEnd(); scheduleAi(); maybePromptLayDown(); }

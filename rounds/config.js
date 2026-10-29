@@ -14,6 +14,7 @@ export const DEFAULTS = {
   // visuals / debug
   cardScale: 1.0,              // 0.7–1.3, scales the cards in the player's hand
   sortHand: 'number',          // 'number' | 'color' | 'none'
+  promptLayDown: true,         // ask to lay down as soon as the cards in your phase slots complete the phase
   showOpponentHands: false,    // cheat/debug: reveal the AI players' cards
 };
 

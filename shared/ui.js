@@ -15,7 +15,7 @@ export function h(spec, attrs = {}, ...children) {
     for (const [k, v] of Object.entries(attrs)) {
       if (v == null || v === false) continue;
       if (k === 'class') el.className += (el.className ? ' ' : '') + v;
-      else if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
+      else if (k === 'style' && typeof v === 'object') for (const [sk, sv] of Object.entries(v)) { if (sk.startsWith('--')) el.style.setProperty(sk, sv); else el.style[sk] = sv; }
       else if (k === 'data') for (const [dk, dv] of Object.entries(v)) el.dataset[dk] = dv;
       else if (k === 'text') el.textContent = v;
       else if (k === 'html') el.innerHTML = v;

@@ -11,28 +11,28 @@
 </head>
 <body>
 <div class="app">
-  <div class="topbar">
-    <a class="btn btn-icon" href="../" aria-label="Back">‹</a>
-    <div class="title">Rounds</div>
-    <div class="stat" id="stat"></div>
-    <button class="btn btn-icon" id="btn-menu" aria-label="Menu">⋯</button>
-  </div>
   <div class="main p10">
-    <div class="opps" id="opps"></div>
-    <div class="center">
-      <div class="piles">
+    <div class="opps-bar">
+      <div class="opps" id="opps"></div>
+      <div class="tools">
+        <button class="btn btn-icon" id="btn-menu" aria-label="Menu">⋯</button>
+        <div class="stat" id="stat"></div>
+      </div>
+    </div>
+    <div class="me" id="me">
+      <div class="me-head" id="me-head"><span class="me-name">You</span><span class="pill" id="phase"></span><span class="hint" id="hint"></span></div>
+      <div class="stage" id="stage"></div>
+    </div>
+    <div class="hand-wrap"><div class="hand" id="hand"></div></div>
+    <div class="side">
+      <div class="piles" id="piles">
         <button class="pile deck" id="deck" aria-label="Draw from the deck"></button>
         <button class="pile discard" id="discard" aria-label="Take the discard"></button>
         <button class="log" id="log" aria-label="Game log"></button>
       </div>
-      <div class="table" id="table"></div>
-    </div>
-    <div class="me">
-      <div class="phase-line"><span id="phase"></span><span class="hint" id="hint"></span></div>
-      <div class="hand" id="hand"></div>
+      <div class="actions" id="actions"></div>
     </div>
   </div>
-  <div class="bottombar" id="actions"></div>
 </div>
 <script type="module" src="main.js"></script>
 </body>

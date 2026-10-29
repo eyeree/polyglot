@@ -467,13 +467,15 @@ async function showMenu() {
     title: 'Abstrackle',
     body: h('div.muted', { text: `Seed ${game.seed} · move ${game.moves} · bonus ${game.cfg.bonusMode} mode, density ${Math.round(game.cfg.bonusDensity * 100)}%` }),
     buttons: [
+      { label: 'Exit', value: 'exit' },
       { label: 'Settings', value: 'settings' },
       { label: 'Help', value: 'help' },
       { label: 'New (seed…)', value: 'seed' },
       { label: 'New game', value: 'new', primary: true },
     ],
   });
-  if (choice === 'new') { if (await confirmNew()) startNewGame(); }
+  if (choice === 'exit') location.href = '../';
+  else if (choice === 'new') { if (await confirmNew()) startNewGame(); }
   else if (choice === 'seed') {
     const input = h('input', { type: 'number', value: game.seed, style: { width: '100%', padding: '8px', fontSize: '16px' } });
     const ok = await modal({ title: 'Game seed', body: h('div', {}, h('p.muted', { text: 'Same seed = same tiles and bonus cells.' }), input), buttons: [{ label: 'Cancel', value: false }, { label: 'Start', value: true, primary: true }] });

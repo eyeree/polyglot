@@ -1,8 +1,8 @@
-/* Abstrackle: opponent strip, scrollable board, hand, bottom bar. Bonus-cell hues match config.js:BONUS. */
-.players {
-  display: flex; gap: 6px; padding: 6px 8px; flex: 0 0 auto;
-  background: var(--bg-2); border-bottom: 1px solid #0006;
-}
+/* Abstrackle: player strip (with the menu button), scrollable board, hand, bottom bar. Bonus-cell hues match config.js:BONUS. */
+.players-bar { display: flex; align-items: stretch; flex: 0 0 auto; background: var(--bg-2); border-bottom: 1px solid #0006; padding-top: 4px; }
+.players { display: flex; gap: 6px; padding: 2px 6px 6px 8px; flex: 1 1 auto; min-width: 0; }
+.tools { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 2px 8px 6px 2px; }
+.tools .stat { font-size: 11px; color: var(--fg-dim); white-space: nowrap; }
 .player {
   flex: 1 1 0; min-width: 0; padding: 4px 7px 5px; border-radius: 8px; cursor: pointer;
   background: var(--panel); border: 2px solid transparent;

@@ -471,6 +471,7 @@ async function showMenu() {
     title: 'Yukon',
     body: h('div.muted', { text: `Seed ${tree.seed} · ${tree.depth(tree.currentId)} moves · ${tree.size()} positions in tree` }),
     buttons: [
+      { label: 'Exit', value: 'exit' },
       { label: 'Settings', value: 'settings' },
       { label: 'Help', value: 'help' },
       { label: 'Restart deal', value: 'restart' },
@@ -478,7 +479,8 @@ async function showMenu() {
       { label: 'New game', value: 'new', primary: true },
     ],
   });
-  if (choice === 'new') { if (tree.size() <= 1 || await confirm('Start a new deal? The current tree is discarded.', { ok: 'New game' })) newGame(); }
+  if (choice === 'exit') location.href = '../';
+  else if (choice === 'new') { if (tree.size() <= 1 || await confirm('Start a new deal? The current tree is discarded.', { ok: 'New game' })) newGame(); }
   else if (choice === 'restart') gotoNode(0);
   else if (choice === 'seed') {
     const input = h('input', { type: 'number', value: tree.seed, style: { width: '100%', padding: '8px', fontSize: '16px' } });

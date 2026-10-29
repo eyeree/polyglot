@@ -35,10 +35,14 @@ Page skeleton used by every game:
 
 ```html
 <div class="app">
-  <div class="topbar"><a class="btn btn-icon" href="../">‹</a><div class="title">Name</div> …stats… …buttons… <button class="btn btn-icon">⚙</button></div>
+  <div class="topbar"><div class="title">Name</div> …stats… …buttons… <button class="btn btn-icon" id="btn-menu">⋯</button></div>
   <div class="main"> …game… </div>
 </div>
 ```
+
+There is no back button: the ⋯ menu has an **Exit** item (back to the launcher) in every game. Games with a
+player strip (Rounds, Abstrackle) have no top bar at all; the ⋯ button and the one stat sit at the right end
+of the strip instead.
 
 ---
 
@@ -135,12 +139,27 @@ possible (unless that would leave nothing to discard and going out by hit is dis
 card whose removal keeps deficit minimal, then by points, then defensively.
 
 ### UI
-Opponents in a compact strip at the top (name, strategy badge, phase, card count, laid-down groups
-rendered small). Table groups tappable (for hits). Player's hand fanned at the bottom, horizontally
-scrollable if needed; tap to select cards. Buttons: Draw deck / Take discard, Lay down (auto-arranges
-selected cards into the phase or explains why not), Hit (selected card → tapped group), Discard. Skip
-target chooser modal. Hand-end summary with scores/phase progress. Settings: opponent count (1–5),
-strategy per seat (or random), card size, animation speed, rule toggles, show opponents' hands (cheat/debug).
+Every player has a panel with one **phase slot per component** of their current phase (labelled
+"Set of 3", "Run of 4", …). Opponent panels (name, strategy badge, phase, score, a fan of face-down
+cards for the hand size) sit in a strip at the top with the ⋯ menu button and hand number at its end;
+their slots fill with the laid-down groups, which are the hit targets. Your panel (phase pill, deficit
+hint, your slots) sits above your hand. Before laying down, your slots are a **staging area**: drag cards
+there from the hand (or select and tap a slot) at any time, including during other players' turns, to keep
+them apart from the rest of the hand; tap/drag a card back to return it. A slot turns green when its cards
+form a valid group; when the slots hold a complete phase during your play stage you are asked whether to
+lay down (`promptLayDown` setting, once per arrangement). *Lay down* plays the slots plus any selected hand
+cards; laid-down groups then show in the slots. Staging lives in `localStorage["rounds.ui"]` keyed by
+seed + hand, not in the game state.
+
+Layout is one CSS grid with two arrangements (`rounds.css`): portrait = strip / deck + discard + log /
+your slots / hand / action bar; landscape (`orientation: landscape` and ≥ 640 px) = strip across the top,
+slots + hand on the left, deck/discard/log and the action buttons in a right column. `fitCards()` sets
+`--cw` so the slot row and hand row both fit the remaining height (capped by the card-size setting).
+Cards inside a slot spread out when there is room and overlap when there isn't (container-query units,
+`--n` = card count). Buttons: Draw / Take discard, Lay down, Hit (selected card → tapped group), Discard.
+Skip target chooser modal. Hand-end summary with scores/phase progress. Settings: opponent count (1–5),
+strategy per seat (or random), AI delay, card size, hand sort, lay-down prompt, rule toggles, show
+opponents' hands (cheat/debug).
 
 ---
 

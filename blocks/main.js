@@ -469,13 +469,15 @@ async function showMenu() {
     title: 'Blocks',
     body: h('div.muted', { text: `Seed ${state.seed} · turn ${state.deals} · ${n}×${n} · score ${state.score.toLocaleString()} · best ${best.toLocaleString()}` }),
     buttons: [
+      { label: 'Exit', value: 'exit' },
       { label: 'Settings', value: 'settings' },
       { label: 'Help', value: 'help' },
       { label: 'New (seed…)', value: 'seed' },
       { label: 'New game', value: 'new', primary: true },
     ],
   });
-  if (choice === 'new') { if (state.over || state.score === 0 || await confirm('Start a new game? The current one is discarded.', { ok: 'New game' })) newGame(); }
+  if (choice === 'exit') location.href = '../';
+  else if (choice === 'new') { if (state.over || state.score === 0 || await confirm('Start a new game? The current one is discarded.', { ok: 'New game' })) newGame(); }
   else if (choice === 'seed') {
     const input = h('input', { type: 'number', value: state.seed, style: { width: '100%', padding: '8px', fontSize: '16px' } });
     const ok = await modal({ title: 'Game seed', body: h('div', {}, h('p.muted', { text: 'Same seed = same sequence of blocks.' }), input), buttons: [{ label: 'Cancel', value: false }, { label: 'Start', value: true, primary: true }] });
