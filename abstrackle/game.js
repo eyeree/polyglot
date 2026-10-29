@@ -1,4 +1,4 @@
-// Qwirkle game state machine. Pure: states are plain objects (board is a Map) and applyMove returns a new state.
+// Abstrackle game state machine. Pure: states are plain objects (board is a Map) and applyMove returns a new state.
 import { makeRng, hashString } from '../shared/rng.js';
 import { HAND_SIZE, END_BONUS, STALL_LIMIT } from './config.js';
 import * as R from './rules.js';

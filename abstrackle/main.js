@@ -1,4 +1,4 @@
-// Qwirkle UI controller. Rendering + input only; rules live in rules.js, the state machine in game.js, opponents in ai.js.
+// Abstrackle UI controller. Rendering + input only; rules live in rules.js, the state machine in game.js, opponents in ai.js.
 import { h, $, clear, modal, confirm, toast, settingsPanel, drawer } from '../shared/ui.js';
 import { makeSettings, load, save } from '../shared/storage.js';
 import { makeRng, randomSeed, hashString } from '../shared/rng.js';
@@ -7,9 +7,9 @@ import * as R from './rules.js';
 import * as G from './game.js';
 import * as AI from './ai.js';
 
-const SAVE_KEY = 'qwirkle.save';
+const SAVE_KEY = 'abstrackle.save';
 const MARGIN = 2;                 // empty cells kept around the played area
-const settings = makeSettings('qwirkle.settings', DEFAULTS);
+const settings = makeSettings('abstrackle.settings', DEFAULTS);
 
 const strategyOptions = [{ value: 'random', label: 'Random' }, ...STRATEGY_IDS.map(id => ({ value: id, label: STRATEGIES[id].name }))];
 const SETTINGS_SCHEMA = [
@@ -87,7 +87,7 @@ function humanHasPlay() {
 function describeScore(last) {
   const bd = last.breakdown;
   const parts = [];
-  if (bd.lines.some(l => l.qwirkle)) parts.push('Qwirkle!');
+  if (bd.lines.some(l => l.complete)) parts.push('Abstrackle!');
   for (const b of bd.bonuses) parts.push(b.label);
   if (last.endBonus) parts.push(`+${last.endBonus} for going out`);
   return `+${last.score}` + (parts.length ? ` · ${parts.join(' ')}` : '');
@@ -449,7 +449,7 @@ function showPlayer(i) {
   else {
     const bd = last.breakdown;
     for (const l of bd.lines) {
-      body.append(h('div.row', {}, h('span', { text: `${l.cells.length > 1 && l.cells[1].x !== l.cells[0].x ? 'Row' : 'Column'} of ${l.len}${l.qwirkle ? ' · Qwirkle' : ''}${l.mul > 1 ? ` ×${l.mul}` : ''}` }), h('span', { text: String(l.points * l.mul) })));
+      body.append(h('div.row', {}, h('span', { text: `${l.cells.length > 1 && l.cells[1].x !== l.cells[0].x ? 'Row' : 'Column'} of ${l.len}${l.complete ? ' · Abstrackle' : ''}${l.mul > 1 ? ` ×${l.mul}` : ''}` }), h('span', { text: String(l.points * l.mul) })));
     }
     if (!bd.lines.length) body.append(h('div.row', {}, h('span', { text: `${last.placements.length} tile${last.placements.length === 1 ? '' : 's'} placed` }), h('span', { text: String(bd.base) })));
     if (bd.muls > 1) body.append(h('div.row', {}, h('span', { text: `Whole move ×${bd.muls}` }), h('span', { text: `${bd.base} → ${bd.base * bd.muls}` })));
@@ -464,7 +464,7 @@ function showPlayer(i) {
 // ---------------------------------------------------------------- menu, settings, help
 async function showMenu() {
   const choice = await modal({
-    title: 'Qwirkle',
+    title: 'Abstrackle',
     body: h('div.muted', { text: `Seed ${game.seed} · move ${game.moves} · bonus ${game.cfg.bonusMode} mode, density ${Math.round(game.cfg.bonusDensity * 100)}%` }),
     buttons: [
       { label: 'Settings', value: 'settings' },
@@ -508,7 +508,7 @@ function showHelp() {
     body: h('div.help', { style: { lineHeight: '1.5' } },
       h('div.shape-row', {}, SHAPES.map((_, s) => tileEl(R.tile(s, s)))),
       h('p', {}, h('b', {}, 'Lines. '), 'Tap a tile in your hand, then an empty cell. Tiles played in one turn sit in a single row or column and must touch what is already on the board. Every line of two or more tiles must share one colour (all different shapes) or one shape (all different colours), with no repeats; six is the most a line can hold.'),
-      h('p', {}, h('b', {}, 'Scoring. '), 'Each line that includes one of your new tiles scores its length; completing a line of six is a Qwirkle and scores 12. You then draw back up to six. Instead of playing you may ', h('b', {}, 'Swap'), ' any tiles with the bag. ', h('b', {}, 'Pass'), ' is only possible when neither is. When the bag is empty, the player who goes out scores 6 more and the game ends. Tap a player to see how their last move scored.'),
+      h('p', {}, h('b', {}, 'Scoring. '), 'Each line that includes one of your new tiles scores its length; completing a line of six is an Abstrackle and scores 12. You then draw back up to six. Instead of playing you may ', h('b', {}, 'Swap'), ' any tiles with the bag. ', h('b', {}, 'Pass'), ' is only possible when neither is. When the bag is empty, the player who goes out scores 6 more and the game ends. Tap a player to see how their last move scored.'),
       h('p', {}, h('b', {}, 'Bonus cells '), 'are scattered over the board (fixed by the seed, none near the centre) and pay out when you cover them:'),
       ...legend,
       h('p.muted', { text: 'Several bonuses in one move stack: adds are summed, multipliers multiplied. Opponents: Greedy maximises score, Blocker avoids opening 4- and 5-lines, Builder keeps a coherent hand, Opportunist chases multipliers and swaps freely.' }),
@@ -531,7 +531,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 // ---------------------------------------------------------------- boot
-window.__qwirkle = {
+window.__abstrackle = {
   get game() { return game; }, get tentative() { return tentative; }, get selected() { return selected; },
   rules: R, ai: AI, G, settings,
   actions: {

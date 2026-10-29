@@ -1,6 +1,6 @@
-// Qwirkle rules: tiles, the board, placement validation, scoring, bonus cells and the
+// Abstrackle rules: tiles, the board, placement validation, scoring, bonus cells and the
 // enumeration of every legal play for a hand. Pure: no DOM, no randomness.
-import { SHAPES, COLORS, COPIES, QWIRKLE_SCORE, BONUS } from './config.js';
+import { SHAPES, COLORS, COPIES, FULL_LINE_SCORE, BONUS } from './config.js';
 
 export const N_SHAPES = SHAPES.length;
 export const N_COLORS = COLORS.length;
@@ -128,7 +128,7 @@ export const REASONS = {
 const fail = (reason) => ({ ok: false, reason, message: REASONS[reason] || reason });
 const OK = { ok: true };
 
-/** Is this sequence of tiles a valid Qwirkle line? (length 1 is trivially fine) */
+/** Is this sequence of tiles a valid Abstrackle line? (length 1 is trivially fine) */
 export function lineCheck(tiles) {
   if (tiles.length < 2) return OK;
   if (tiles.length > N_SHAPES) return fail('too-long');
@@ -197,14 +197,14 @@ export function validate(board, placements) {
 // ---------------------------------------------------------------- scoring
 /**
  * scoreMove(board, placements, bonusFn?, bonusMode?) -> breakdown
- * { lines: [{cells, len, points, qwirkle, mul}], base, adds, muls, bonuses, total }
+ * { lines: [{cells, len, points, complete, mul}], base, adds, muls, bonuses, total }
  * base = Σ line points × line multipliers (or 1 per tile if the move forms no line — first move only);
  * total = base × move multiplier + adds.
  */
 export function scoreMove(board, placements, bonusFn = null, bonusMode = 'line') {
   const view = overlay(board, placements);
   const lines = affectedLines(view, placements).map(cells => ({
-    cells, len: cells.length, points: cells.length === N_SHAPES ? QWIRKLE_SCORE : cells.length, qwirkle: cells.length === N_SHAPES, mul: 1,
+    cells, len: cells.length, points: cells.length === N_SHAPES ? FULL_LINE_SCORE : cells.length, complete: cells.length === N_SHAPES, mul: 1,
   }));
   const bonuses = [];
   let adds = 0, muls = 1;

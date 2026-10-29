@@ -1,14 +1,14 @@
 # Games
 
-Personal, mobile-first re-creations of a few idle games, built to be tweaked. Plain HTML/CSS/ES modules,
+Personal, mobile-first card and tile games, built to be tweaked. Plain HTML/CSS/ES modules,
 no build step, no dependencies.
 
 | Game | Folder | What's special |
 |---|---|---|
 | Yukon solitaire | `yukon/` | Every move is a node in a game tree; jump back to any choice, see untried alternatives, and run a solver to learn which choices keep the deal winnable |
-| Phase 10 | `phase10/` | 1–5 AI opponents that always play well but with different strategy profiles |
+| Rounds | `rounds/` | 1–5 AI opponents that always play well but with different strategy profiles |
 | Blocks | `blocks/` | Turn-based block fitting with a side slot and rotation points earned by clearing lines |
-| Qwirkle | `qwirkle/` | Bonus cells (+1, +2, ×2, ×3), several AI strategies, a difficulty slider |
+| Abstrackle | `abstrackle/` | Bonus cells (+1, +2, ×2, ×3), several AI strategies, a difficulty slider |
 
 ## Run
 

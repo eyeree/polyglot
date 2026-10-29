@@ -1,4 +1,4 @@
-// Phase 10 tweakables. Runtime-adjustable ones are also exposed in the ⚙ drawer (see SETTINGS_SCHEMA in main.js).
+// Rounds tweakables. Runtime-adjustable ones are also exposed in the ⚙ drawer (see SETTINGS_SCHEMA in main.js).
 export const DEFAULTS = {
   // table
   opponents: 3,                // 1–5

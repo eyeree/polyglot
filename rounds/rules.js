@@ -1,4 +1,4 @@
-// Phase 10 rules (pure): cards, phase fitting (deficit / canLayDown), hits, scoring. No DOM.
+// Rounds rules (pure): cards, phase fitting (deficit / canLayDown), hits, scoring. No DOM.
 import { PHASES, COLORS } from './config.js';
 
 // ---------------------------------------------------------------- cards

@@ -1,6 +1,6 @@
 # Design notes
 
-Personal, mobile-first re-creations of four idle games. Not for distribution. The point is to be
+Personal, mobile-first collection of four card and tile games. Not for distribution. The point is to be
 able to tweak rules, opponent behaviour/UI and visuals easily, so:
 
 * **No build step.** Plain HTML + CSS + ES modules. Edit a file, reload the page.
@@ -27,7 +27,7 @@ shared/  base.css     dark theme, .btn, .topbar, .modal, .drawer, .settings
          pointer.js   onPress(el, {onTap,onDragStart,onDragMove,onDragEnd}), elementAt()
          rng.js       makeRng(seed) -> next/int/range/pick/shuffle, randomSeed(), hashString()
          storage.js   load/save/remove, makeSettings(key, defaults)
-yukon/   phase10/   blocks/   qwirkle/     one folder per game: index.html, <game>.css, config.js, main.js + logic modules
+yukon/   rounds/   blocks/   abstrackle/     one folder per game: index.html, <game>.css, config.js, main.js + logic modules
 tests/   *.test.js   node --test tests/
 ```
 
@@ -99,7 +99,7 @@ auto-play safe foundation moves, solver budget, Kings-only to empty column.
 
 ---
 
-## 2. Phase 10 (`phase10/`)
+## 2. Rounds (`rounds/`)
 
 ### Rules
 108 cards: 1–12 ×2 in red/blue/green/yellow (96) + 8 Wild + 4 Skip. 10 cards each. Turn: draw
@@ -108,7 +108,7 @@ phase → if laid down (this hand), hit cards onto any laid-down groups on the t
 Discarding a Skip makes a chosen player lose their next turn. Hand ends when someone has no cards
 (by discard or by hitting the last card, configurable). Players who laid down advance a phase;
 scoring is cards left in hand: 1–9 = 5, 10–12 = 10, Skip = 15, Wild = 25. Game ends when a player
-finishes phase 10 at the end of a hand; lowest score among them wins.
+finishes the final phase at the end of a hand; lowest score among them wins.
 
 Phases: 1) 2 sets of 3 · 2) set of 3 + run of 4 · 3) set of 4 + run of 4 · 4) run of 7 · 5) run of 8
 · 6) run of 9 · 7) 2 sets of 4 · 8) 7 cards of one colour · 9) set of 5 + set of 2 · 10) set of 5 + set of 3.
@@ -185,12 +185,12 @@ tap-cell as fallback; rotate button on the selected block showing the cost. High
 
 ---
 
-## 4. Qwirkle (`qwirkle/`)
+## 4. Abstrackle (`abstrackle/`)
 
 108 tiles: 6 shapes × 6 colours × 3. Hand of 6. A move places ≥ 1 tiles in one line sharing one attribute,
 contiguous with existing tiles; every line (≥ 2) touched must be all-same-colour-different-shapes or
 all-same-shape-different-colours, max 6. Score = sum of lengths of every line (≥ 2) containing a placed
-tile; a 6-line scores 12 (Qwirkle). First move: any valid line, scores its length. Alternative turn:
+tile; a 6-line scores 12 (Abstrackle). First move: any valid line, scores its length. Alternative turn:
 exchange any tiles with the bag. Game ends when the bag is empty and someone empties their hand
 (+6 bonus), or when nobody can move.
 
@@ -204,7 +204,7 @@ Logic (`rules.js`, pure): board as `Map("x,y" -> tile)`, `legalPlacements(board,
 AI (`ai.js`, pure): enumerates all placements (anchor empty cell adjacent to tiles → extend along an
 axis in both directions, skipping over existing tiles, pruning by the shared-attribute rule, dedupe).
 Strategies: *Greedy* (max score), *Blocker* (score − penalty for leaving open 4/5-lines others can
-Qwirkle on), *Builder* (score + hand-synergy value of kept tiles), *Opportunist* (greedy but exchanges
+Abstrackle on), *Builder* (score + hand-synergy value of kept tiles), *Opportunist* (greedy but exchanges
 aggressively when the best move is low). **Difficulty slider**: with probability `p` the AI picks a move
 within `slack` points of the best, or from the top-k, instead of the best.
 

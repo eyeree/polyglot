@@ -1,4 +1,4 @@
-// Phase 10 game state machine (pure, no DOM). All actions mutate the state in place and return { ok, reason }.
+// Rounds game state machine (pure, no DOM). All actions mutate the state in place and return { ok, reason }.
 //
 // state: {
 //   seed, hand, opts: { allowSameNumberSets, goOutByHit },

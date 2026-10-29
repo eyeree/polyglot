@@ -1,4 +1,4 @@
-/* Phase 10 — layout: opponent strip / piles + table / own hand / action bar. Cards are sized by --w per region. */
+/* Rounds — layout: opponent strip / piles + table / own hand / action bar. Cards are sized by --w per region. */
 .p10 {
   display: flex; flex-direction: column; overflow: hidden;
   --scale: 1;

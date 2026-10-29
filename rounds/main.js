@@ -1,4 +1,4 @@
-// Phase 10 UI controller. Rendering + input only; rules live in rules.js, state changes in game.js, opponents in ai.js.
+// Rounds UI controller. Rendering + input only; rules live in rules.js, state changes in game.js, opponents in ai.js.
 import { h, $, clear, modal, confirm, toast, settingsPanel, drawer } from '../shared/ui.js';
 import { onPress } from '../shared/pointer.js';
 import { makeSettings, load, save } from '../shared/storage.js';
@@ -8,8 +8,8 @@ import * as R from './rules.js';
 import * as G from './game.js';
 import * as AI from './ai.js';
 
-const SAVE_KEY = 'phase10.save';
-const settings = makeSettings('phase10.settings', DEFAULTS);
+const SAVE_KEY = 'rounds.save';
+const settings = makeSettings('rounds.settings', DEFAULTS);
 const rulesOpts = () => ({ allowSameNumberSets: !!settings.get('allowSameNumberSets'), goOutByHit: !!settings.get('goOutByHit') });
 
 const stratOptions = [{ value: 'random', label: 'Random' }, ...Object.entries(STRATEGIES).map(([k, v]) => ({ value: k, label: v.name }))];
@@ -411,7 +411,7 @@ async function showSummary() {
   if (sum.gameOver) {
     const winners = sum.winners.map(nameOf);
     const title = winners.includes('You') && winners.length === 1 ? 'You win! 🎉' : `${winners.join(' & ')} win${winners.length === 1 ? 's' : ''}`;
-    const v = await modal({ title, body: h('div', {}, h('p.muted', { text: `Game over after ${sum.hand} hands. Lowest score among those who finished phase 10 wins.` }), summaryTable(sum)),
+    const v = await modal({ title, body: h('div', {}, h('p.muted', { text: `Game over after ${sum.hand} hands. Lowest score among those who finished the final phase wins.` }), summaryTable(sum)),
       buttons: [{ label: 'Close', value: false }, { label: 'New game', value: true, primary: true }] });
     if (v) startNewGame();
     return;
@@ -444,7 +444,7 @@ window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { selected.c
 // ---------------------------------------------------------------- menu, settings, help, log
 async function showMenu() {
   const choice = await modal({
-    title: 'Phase 10',
+    title: 'Rounds',
     body: h('div.muted', { text: `Seed ${state.seed} · hand ${state.hand} · ${state.players.length} players` }),
     buttons: [
       { label: 'Settings', value: 'settings' },
@@ -489,7 +489,7 @@ function showHelp() {
   modal({
     title: 'How to play', wide: true,
     body: h('div.help', { style: { lineHeight: '1.5' } },
-      h('p', {}, h('b', {}, 'Goal: '), 'complete phases 1–10 in order. A hand ends when someone has no cards left. Everyone who laid down their phase moves on; the rest repeat it. Cards left in hand count against you (1–9: 5, 10–12: 10, Skip: 15, Wild: 25). The game ends after a hand in which someone finished phase 10; lowest score among them wins.'),
+      h('p', {}, h('b', {}, 'Goal: '), 'complete phases 1–10 in order. A hand ends when someone has no cards left. Everyone who laid down their phase moves on; the rest repeat it. Cards left in hand count against you (1–9: 5, 10–12: 10, Skip: 15, Wild: 25). The game ends after a hand in which someone finished the final phase; lowest score among them wins.'),
       h('p', {}, h('b', {}, 'Turn: '), 'draw from the deck or take the top discard (not a Skip) → optionally lay down your whole phase at once (select the cards, tap Lay down) → once laid down, hit any card that fits onto any group on the table (select one card, tap the group) → discard one card.'),
       h('p', {}, h('b', {}, 'Groups: '), 'set = same number, any colours · run = consecutive numbers, no wrap · colour = all one colour. Wilds stand in for anything; every group needs at least one real card. Discarding a Skip makes a player of your choice lose their next turn.'),
       h('p', {}, h('b', {}, 'Hints: '), 'the line above your hand shows how many cards you are from completing your phase. Opponents each have a strategy badge: ', Object.values(STRATEGIES).map((s, i) => [i ? ', ' : '', h('b', { text: s.name })]), '. They all play well; the badges only change their priorities (points, defence, when to Skip whom).'),
@@ -498,7 +498,7 @@ function showHelp() {
 }
 
 // ---------------------------------------------------------------- boot
-window.__phase10 = {
+window.__rounds = {
   get game() { return state; },
   rules: R, ai: AI, G, settings, STRATEGIES,
   actions: {

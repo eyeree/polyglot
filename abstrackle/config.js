@@ -1,4 +1,4 @@
-// Qwirkle tweakables. Runtime-adjustable ones are also exposed in the ⚙ drawer (see SETTINGS_SCHEMA in main.js).
+// Abstrackle tweakables. Runtime-adjustable ones are also exposed in the ⚙ drawer (see SETTINGS_SCHEMA in main.js).
 export const DEFAULTS = {
   // opponents (applied to new games)
   opponents: 2,                // 1–3 AI players
@@ -28,7 +28,7 @@ export const COLORS = [
 ];
 export const COPIES = 3;             // of each shape/colour tile → 108 tiles
 export const HAND_SIZE = 6;
-export const QWIRKLE_SCORE = 12;     // a completed line of 6
+export const FULL_LINE_SCORE = 12;     // a completed line of 6
 export const END_BONUS = 6;          // for emptying your hand once the bag is empty
 export const STALL_LIMIT = 30;       // safety: consecutive turns without a play before the game is called
 
@@ -54,7 +54,7 @@ export const STRATEGIES = {
     exchangeThreshold: 0,      // exchange instead of playing when the best play scores ≤ this (and the bag is full enough)
   },
   blocker: {
-    name: 'Blocker', blurb: 'Avoids leaving 4- and 5-lines open for others to Qwirkle on.',
+    name: 'Blocker', blurb: 'Avoids leaving 4- and 5-lines open for others to Abstrackle on.',
     exchangeThreshold: 1,
     openLinePenalty: 3,        // per open 4/5-line the move creates or extends
     closeBonus: 2,             // per existing 4/5-line the move completes

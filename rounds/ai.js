@@ -1,4 +1,4 @@
-// Phase 10 AI (pure). One decision engine; STRATEGIES profiles (config.js) only change priorities.
+// Rounds AI (pure). One decision engine; STRATEGIES profiles (config.js) only change priorities.
 //
 //   chooseDraw(state, me, profile)  -> 'deck' | 'discard'
 //   choosePlays(state, me, profile) -> { layDown: [ids] | null, hits: [{ card, group, end }], discard: { card, target } | null }

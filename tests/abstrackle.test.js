@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeRng } from '../shared/rng.js';
-import { STRATEGY_IDS, BONUS, HAND_SIZE, END_BONUS } from '../qwirkle/config.js';
-import * as R from '../qwirkle/rules.js';
-import * as G from '../qwirkle/game.js';
-import * as AI from '../qwirkle/ai.js';
+import { STRATEGY_IDS, BONUS, HAND_SIZE, END_BONUS } from '../abstrackle/config.js';
+import * as R from '../abstrackle/rules.js';
+import * as G from '../abstrackle/game.js';
+import * as AI from '../abstrackle/ai.js';
 
 const T = R.tile; // tile(shape, color)
 const boardOf = (cells) => new Map(cells.map(([x, y, t]) => [R.key(x, y), t]));
@@ -58,7 +58,7 @@ test('placement geometry: first move, line, gap, bridging, connection', () => {
   assert.ok(R.validate(c, [P(1, 1, T(1, 1))]).ok, 'orange cross fits both lines');
 });
 
-test('scoring: first move, two directions, Qwirkle = 12', () => {
+test('scoring: first move, two directions, Abstrackle = 12', () => {
   assert.equal(R.scoreMove(new Map(), [P(0, 0, T(0, 0))]).total, 1, 'single first tile');
   assert.equal(R.scoreMove(new Map(), [P(0, 0, T(0, 0)), P(1, 0, T(1, 0)), P(2, 0, T(2, 0))]).total, 3);
   const b = boardOf([[0, 0, T(0, 0)], [1, 0, T(1, 0)], [0, 1, T(0, 1)]]);
@@ -69,11 +69,11 @@ test('scoring: first move, two directions, Qwirkle = 12', () => {
   // two tiles extending the row: row of 4 + one perpendicular line of 2
   const s2 = R.scoreMove(b, [P(2, 0, T(2, 0)), P(3, 0, T(3, 0))]);
   assert.equal(s2.total, 4, 'row of four only (no perpendicular neighbours)');
-  // Qwirkle
+  // Abstrackle
   const five = boardOf([0, 1, 2, 3, 4].map(i => [i, 0, T(i, 0)]));
   const q = R.scoreMove(five, [P(5, 0, T(5, 0))]);
   assert.equal(q.total, 12);
-  assert.ok(q.lines[0].qwirkle);
+  assert.ok(q.lines[0].complete);
   // extending a line also scores existing tiles in it
   const s3 = R.scoreMove(five, [P(0, 1, T(0, 1)), P(0, 2, T(0, 2))]);
   assert.equal(s3.total, 3, 'column of three, row untouched');

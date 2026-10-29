@@ -1,4 +1,4 @@
-/* Qwirkle: opponent strip, scrollable board, hand, bottom bar. Bonus-cell hues match config.js:BONUS. */
+/* Abstrackle: opponent strip, scrollable board, hand, bottom bar. Bonus-cell hues match config.js:BONUS. */
 .players {
   display: flex; gap: 6px; padding: 6px 8px; flex: 0 0 auto;
   background: var(--bg-2); border-bottom: 1px solid #0006;

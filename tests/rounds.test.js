@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import * as R from '../phase10/rules.js';
-import * as G from '../phase10/game.js';
-import * as AI from '../phase10/ai.js';
-import { PHASES, STRATEGIES, COLORS } from '../phase10/config.js';
+import * as R from '../rounds/rules.js';
+import * as G from '../rounds/game.js';
+import * as AI from '../rounds/ai.js';
+import { PHASES, STRATEGIES, COLORS } from '../rounds/config.js';
 import { makeRng } from '../shared/rng.js';
 
 // ---------------------------------------------------------------- card helpers
@@ -317,7 +317,7 @@ test('going out: by discard, by hit (toggle), scoring and phase advance', () => 
   for (const p of s.players) { assert.equal(p.hand.length, 10); assert.equal(p.laidDown, false); }
 });
 
-test('game ends after a hand in which someone finishes phase 10; lowest score among them wins', () => {
+test('game ends after a hand in which someone finishes the final phase; lowest score among them wins', () => {
   const s = G.newGame({ seed: 7, players: [{ name: 'A' }, { name: 'B', ai: 'steady' }, { name: 'C', ai: 'hoarder' }] });
   s.turn = 1; s.stage = 'play'; s.players.forEach(p => { p.skipped = false; });
   s.players[0].phase = 10; s.players[0].laidDown = true; s.players[0].score = 100; s.players[0].hand = [N(1).id];
@@ -416,7 +416,7 @@ test('AI-vs-AI games with 2–6 players terminate with a declared winner', () =>
     assert.ok(s.summary.gameOver);
     assert.ok(s.summary.winners.length >= 1, 'a winner is declared');
     for (const w of s.summary.winners) assert.ok(s.players[w].phase > 10);
-    assert.ok(s.hand >= 10, 'at least ten hands are needed to finish phase 10');
+    assert.ok(s.hand >= 10, 'at least ten hands are needed to finish the final phase');
     assert.ok(turns < 2000, `sane turn count (${turns})`);
   }
 });
