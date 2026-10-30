@@ -213,21 +213,50 @@ tile; a 6-line scores 12 (Abstrackle). First move: any valid line, scores its le
 exchange any tiles with the bag. Game ends when the bag is empty and someone empties their hand
 (+6 bonus), or when nobody can move.
 
-**Bonus cells** (added option): the infinite board has deterministic bonus cells from the seed
-(`bonusAt(seed, x, y)` hashing; density and weights in `config.js`: +1 / +2 / ×2 / ×3). A bonus is
-awarded when the cell is filled: `+n` adds to the move, `×n` multiplies the lines containing that tile
-(`bonusMode: 'line'`) or the whole move (`'move'`). Centre area (first move) is bonus-free.
+**Bonus cells** (added option): the board has deterministic bonus cells from the seed
+(`bonusAt(seed, x, y)` hashing; density, kinds and weights in `config.js:BONUS`: `+n` with n drawn per cell from
+4–12, `×2`, `×3`). A bonus is awarded when the cell is filled: `+n` adds to the move, `×n` multiplies the lines
+containing that tile (`bonusMode: 'line'`) or the whole move (`'move'`). Centre area (first move) is bonus-free.
+The `bonusTypes` setting limits them to `+n` only / `×n` only / none, in every mode. In the round modes the layout
+is re-rolled per round (seed hashed with the round number).
 
-Logic (`rules.js`, pure): board as `Map("x,y" -> tile)`, `legalPlacements(board, hand)`,
-`scoreMove(board, placements, bonusFn)`, `validate(board, placements)`.
-AI (`ai.js`, pure): enumerates all placements (anchor empty cell adjacent to tiles → extend along an
-axis in both directions, skipping over existing tiles, pruning by the shared-attribute rule, dedupe).
+**Game modes** (`config.js:MODES`, `cfg.mode`). *Classic* is the game above. The other three follow the Android game
+"6 tiles in a row" and share these rules: every round starts with one random tile on the centre cell; the first
+player of round 1 is random (seeded), then the opener rotates each round; tiles played in a turn form a **chain**
+(the placed set must be 4-connected and touch the board — any shape, not just a line — so a 2×2 block scores four
+lines of two); round points add into a game total and the highest total after the last round wins (`rounds`
+setting, 1–10). Scoring per line is unchanged.
+
+| mode | board | tiles | round ends | notes |
+|---|---|---|---|---|
+| `turns` | `boardSize`×`boardSize` (0 = unlimited) | endless pool (uniform random, drawn deterministically from `seed:pool:<draws>`) | every player has taken `turnsPerRound` turns, or everyone passed | a hand with no play is replaced at the start of the turn, up to `MAX_REDRAWS` times, then passing is allowed; swapping costs a turn |
+| `goal` | unlimited | endless pool | the mover's round points reach `pointsGoal` (or everyone passed / stall limit) | same redraw rule |
+| `bag` | `boardSize`×`boardSize` | a fresh shuffled bag of 108 per round | bag empty and everyone passed in turn | no swapping; a player with no play draws one extra tile at the start of the turn (hand can hold 7) and may then play or pass |
+
+State additions: `cfg {mode, rounds, turnsPerRound, boardSize, pointsGoal, bonusTypes}`, `round`, `firstPlayer`,
+`draws`, `drew`, `turnEvent` (`{type:'redraw', n}` / `{type:'draw'}`, set by `prepareTurn` for the UI toast),
+`roundOver` + `summary` (the UI shows the round table and calls `nextRound(state)`), per player `roundScore` and
+`turns`. `G.rulesOpts(state)` → `{chain, bounds}` is passed to `rules.js:validate / legalPlacements / hasAnyPlay`;
+`R.squareBounds(n)` gives the limits of a bounded board. Old classic saves load via `fromJSON` defaults.
+
+Logic (`rules.js`, pure): board as `Map("x,y" -> tile)`, `legalPlacements(board, hand, {chain, bounds, prune})`,
+`scoreMove(board, placements, bonusFn)`, `validate(board, placements, {chain, bounds})`, `isConnected(cells)`.
+AI (`ai.js`, pure): enumerates all placements. Line mode: anchor empty cell adjacent to tiles → extend along an
+axis in both directions, skipping over existing tiles, pruning by the shared-attribute rule, dedupe. Chain mode:
+breadth-first by tile count, growing each partial play into any empty cell next to one of its tiles; the full space
+is huge for coherent hands, so `enumeratePlays` keeps only the `AI.beam` best-scoring partials per depth (beam 0 =
+exhaustive, used by tests).
 Strategies: *Greedy* (max score), *Blocker* (score − penalty for leaving open 4/5-lines others can
 Abstrackle on), *Builder* (score + hand-synergy value of kept tiles), *Opportunist* (greedy but exchanges
 aggressively when the best move is low). **Difficulty slider**: with probability `p` the AI picks a move
-within `slack` points of the best, or from the top-k, instead of the best.
+within `slack` points of the best, or from the top-k, instead of the best. Swapping follows `G.poolSize` (∞ in the
+endless-pool modes, never in Bag mode).
 
-UI: scrollable/pannable board with auto-expanding bounds (2-cell margin), zoom buttons, bonus cells
-drawn under tiles; tap a hand tile → tap a cell to place tentatively; *Play* commits (validates and
-scores), *Take back*, *Swap* mode. Opponent strip with name/strategy/score/tile count and last-move
-highlight. Settings: opponent count/strategies, difficulty, bonus density/mode, tile size.
+UI: scrollable/pannable board with auto-expanding bounds (2-cell margin) or the fixed outlined square of a
+bounded mode, zoom buttons, bonus cells drawn under tiles; tap a hand tile → tap a cell to place tentatively
+(hints show where the selected tile can join the tentative tiles, which in chain modes means next to them); *Play*
+commits (validates and scores), *Take back*, *Swap* mode (hidden in Bag mode), *Pass* when allowed. Opponent strip
+with name/strategy/total score/round score (tile count in Classic and Bag) and last-move highlight; the stat
+corner shows the bag, or round + turn/goal. Round end: modal with the round table and *Next round* (also on the
+Play button). Settings: mode, rounds, turns per round, board size, points goal, opponent count/strategies,
+difficulty, bonus types/density/mode, tile size.

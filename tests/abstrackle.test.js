@@ -93,10 +93,26 @@ test('bonus cells are deterministic, keep the centre clear and follow the densit
   const density = n / total;
   assert.ok(density > 0.06 && density < 0.10, `density ${density}`);
   const w = Object.fromEntries(BONUS.kinds.map(k => [k.id, k.weight]));
-  assert.ok(kinds.get('add1') > kinds.get('add2') && kinds.get('add2') > kinds.get('mul2') && kinds.get('mul2') > kinds.get('mul3'), JSON.stringify([...kinds]));
-  assert.equal(Object.keys(w).length, 4);
+  assert.ok(kinds.get('add') > kinds.get('mul2') && kinds.get('mul2') > kinds.get('mul3'), JSON.stringify([...kinds]));
+  assert.equal(Object.keys(w).length, 3);
   assert.notDeepEqual(R.bonusAt(seed, 7, 9), R.bonusAt(seed + 1, 7, 9) ?? { none: true }, 'seed changes the layout (or both null)');
   assert.equal(R.bonusAt(seed, 10, 10, { density: 0 }), null);
+  // add values span +4..+12 and carry a matching label
+  const adds = new Set();
+  for (let x = -60; x <= 60; x++) for (let y = -60; y <= 60; y++) {
+    const b = R.bonusAt(seed, x, y, { density: 0.08 });
+    if (!b) continue;
+    if (b.type === 'add') { assert.ok(b.n >= 4 && b.n <= 12, `add ${b.n}`); assert.equal(b.label, '+' + b.n); adds.add(b.n); }
+    else assert.equal(b.label, '×' + b.n);
+  }
+  assert.equal(adds.size, 9, 'every value from 4 to 12 appears');
+  // bonus types filter
+  for (let x = -30; x <= 30; x++) for (let y = -30; y <= 30; y++) {
+    assert.equal(R.bonusAt(seed, x, y, { types: 'none' }), null);
+    const a = R.bonusAt(seed, x, y, { types: 'add' }); if (a) assert.equal(a.type, 'add');
+    const m = R.bonusAt(seed, x, y, { types: 'mul' }); if (m) assert.equal(m.type, 'mul');
+    assert.equal(!!a, !!m, 'the filter changes the kind, not the layout');
+  }
 });
 
 test('bonus application in line and move mode', () => {
@@ -350,4 +366,245 @@ test('end of game: emptying the hand with an empty bag awards +6; all-pass ends 
   q = G.applyMove(q, { type: 'pass' });
   assert.ok(q.over);
   assert.equal(q.winners.length, 2, 'tie');
+});
+
+// ================================================================ modes: Turns / Goal / Bag
+const twoAI = [{ name: 'a', ai: 'greedy' }, { name: 'b', ai: 'greedy' }];
+
+test('square bounds and bounded anchors', () => {
+  assert.equal(R.squareBounds(0), null);
+  assert.deepEqual(R.squareBounds(15), { minX: -7, maxX: 7, minY: -7, maxY: 7 });
+  assert.deepEqual(R.squareBounds(14), { minX: -7, maxX: 6, minY: -7, maxY: 6 });
+  const b = R.squareBounds(3);
+  assert.ok(R.inBounds(b, 1, -1) && !R.inBounds(b, 2, 0) && R.inBounds(null, 99, 99));
+  const board = boardOf([[1, 0, T(0, 0)]]);
+  const anchors = R.anchorCells(board, b).map(a => R.key(a.x, a.y)).sort();
+  assert.deepEqual(anchors, ['0,0', '1,-1', '1,1'], 'the cell at 2,0 is off the board');
+  assert.equal(R.validate(board, [P(2, 0, T(1, 0))], { bounds: b }).reason, 'off-board');
+  assert.ok(R.validate(board, [P(2, 0, T(1, 0))]).ok);
+});
+
+test('chain placement: connected group touching the board, any shape, lines still checked', () => {
+  const board = boardOf([[0, 0, T(0, 5)]]);   // purple circle in the centre
+  const chain = { chain: true };
+  // the staircase from the screenshot: purple star left of the centre, green star above it, green circle left of that
+  const stairs = [P(-1, 0, T(4, 5)), P(-1, -1, T(4, 3)), P(-2, -1, T(0, 3))];
+  assert.ok(R.validate(board, stairs, chain).ok);
+  assert.equal(R.validate(board, stairs).reason, 'not-a-line', 'illegal in line mode');
+  assert.equal(R.scoreMove(board, stairs).total, 6, 'three lines of two');
+  // every tile must touch another placed tile
+  assert.equal(R.validate(board, [P(-1, 0, T(4, 5)), P(1, 0, T(1, 5))], chain).reason, 'chain');
+  assert.equal(R.validate(board, [P(-1, 0, T(4, 5)), P(-1, 1, T(4, 3)), P(1, 0, T(1, 5))], chain).reason, 'chain');
+  // and the group must touch the board
+  assert.equal(R.validate(board, [P(3, 0, T(4, 5)), P(3, 1, T(4, 3))], chain).reason, 'not-connected');
+  // a 2×2 block: rows share colour, columns share shape → 4 lines of 2 = 8
+  const block = [P(1, 0, T(1, 5)), P(1, 1, T(1, 2)), P(0, 1, T(0, 2))];
+  assert.ok(R.validate(board, block, chain).ok);
+  assert.equal(R.scoreMove(board, block).total, 8);
+  // bad line inside the group
+  assert.equal(R.validate(board, [P(1, 0, T(1, 5)), P(1, 1, T(2, 2))], chain).reason, 'mixed');
+  assert.equal(R.validate(board, [P(1, 0, T(1, 5)), P(2, 0, T(1, 5))], chain).reason, 'duplicate');
+  assert.ok(R.isConnected([]) && R.isConnected([{ x: 0, y: 0 }]) && !R.isConnected([{ x: 0, y: 0 }, { x: 1, y: 1 }]));
+});
+
+test('chain enumeration matches brute force on a small case; beam search returns legal plays including the best', () => {
+  const board = boardOf([[0, 0, T(0, 5)], [1, 0, T(1, 5)]]);
+  const hand = [T(2, 5), T(0, 3), T(1, 3)];
+  const opts = { chain: true, bounds: R.squareBounds(7) };
+  const got = new Set(R.legalPlacements(board, hand, opts).map(R.playKey));
+  // brute force: every assignment of a subset of the hand to cells within 3 of the origin
+  const cells = [];
+  for (let x = -3; x <= 3; x++) for (let y = -3; y <= 3; y++) if (!board.has(R.key(x, y))) cells.push({ x, y });
+  const want = new Set();
+  for (const sub of subsets(hand)) for (const perm of permutations(sub)) {
+    const rec = (i, used, acc) => {
+      if (i === perm.length) { if (R.validate(board, acc, opts).ok) want.add(R.playKey(acc)); return; }
+      for (const c of cells) { const k = R.key(c.x, c.y); if (used.has(k)) continue; used.add(k); rec(i + 1, used, [...acc, { x: c.x, y: c.y, tile: perm[i] }]); used.delete(k); }
+    };
+    rec(0, new Set(), []);
+  }
+  assert.equal(got.size, want.size);
+  for (const k of want) assert.ok(got.has(k), 'missing ' + k);
+  // beam
+  const all = AI.enumeratePlays(board, hand, { chain: true, beam: 0 });
+  const beamed = AI.enumeratePlays(board, hand, { chain: true, beam: 6 });
+  assert.ok(beamed.length < all.length);
+  assert.ok(beamed.every(p => R.validate(board, p.placements, opts).ok));
+  assert.equal(Math.max(...beamed.map(p => p.score)), Math.max(...all.map(p => p.score)));
+});
+
+test('chain enumeration with the default beam stays fast on a coherent hand', () => {
+  const board = boardOf([[0, 0, T(0, 5)]]);
+  const hand = [T(0, 0), T(1, 0), T(2, 0), T(3, 0), T(4, 0), T(5, 0)];   // six red tiles: worst case
+  const t0 = performance.now();
+  const plays = AI.enumeratePlays(board, hand, { chain: true, bounds: R.squareBounds(15) });
+  const dt = performance.now() - t0;
+  assert.ok(plays.length > 100);
+  assert.ok(dt < 1500, `took ${dt.toFixed(0)} ms`);
+});
+
+test('newGame per mode: centre tile, seeded first player, bag or endless pool', () => {
+  for (const mode of ['turns', 'goal', 'bag']) {
+    const s = G.newGame({ seed: 5, players: [{ name: 'You' }, ...twoAI], mode });
+    assert.equal(s.board.size, 1);
+    assert.ok(s.board.has('0,0'));
+    assert.ok(s.players.every(p => p.hand.length >= HAND_SIZE));
+    assert.equal(s.round, 1);
+    assert.equal(s.turn, s.firstPlayer);
+    assert.equal(G.rulesOpts(s).chain, true);
+    if (mode === 'bag') { assert.equal(G.tileCount(s), 108 + 1); assert.equal(G.poolSize(s), s.bag.length); }
+    else { assert.equal(s.bag.length, 0); assert.equal(G.poolSize(s), Infinity); }
+    assert.deepEqual(G.bounds(s), mode === 'goal' ? null : R.squareBounds(15));
+    assert.deepEqual(G.newGame({ seed: 5, players: [{ name: 'You' }, ...twoAI], mode }).players.map(p => p.hand), s.players.map(p => p.hand), 'seeded');
+  }
+  const starters = new Set();
+  for (let seed = 0; seed < 30; seed++) starters.add(G.newGame({ seed, players: [{ name: 'You' }, ...twoAI], mode: 'turns' }).firstPlayer);
+  assert.equal(starters.size, 3, 'the opener varies with the seed');
+  const classic = G.newGame({ seed: 5, players: twoAI });
+  assert.equal(classic.cfg.mode, 'classic');
+  assert.equal(classic.cfg.rounds, 1);
+});
+
+function aiMove(s, difficulty = 100) {
+  return AI.chooseMove(s, s.turn, s.players[s.turn].ai || 'greedy', difficulty, makeRng(s.moves + 1));
+}
+
+test('Turns mode: N turns each, round summary, rotating opener, totals carry, game ends after the last round', () => {
+  let s = G.newGame({ seed: 21, players: twoAI, mode: 'turns', rounds: 2, turnsPerRound: 3, boardSize: 11 });
+  const opener = s.firstPlayer;
+  let moves = 0;
+  while (!s.roundOver) { s = G.applyMove(s, aiMove(s)); moves++; assert.ok(moves <= 6); }
+  assert.equal(moves, 6);
+  assert.ok(s.players.every(p => p.turns === 3));
+  assert.ok(!s.over);
+  assert.equal(s.summary.round, 1);
+  assert.equal(s.summary.rows.length, 2);
+  assert.throws(() => G.applyMove(s, aiMove(s)), /round/i);
+  const totals = s.players.map(p => p.score);
+  assert.ok(totals.some(t => t > 0));
+  assert.deepEqual(s.players.map(p => p.roundScore), totals);
+  s = G.nextRound(s);
+  assert.equal(s.round, 2);
+  assert.equal(s.board.size, 1, 'fresh board with a centre tile');
+  assert.equal(s.turn, (opener + 1) % 2, 'the other player opens round 2');
+  assert.deepEqual(s.players.map(p => p.score), totals, 'totals carried');
+  assert.ok(s.players.every(p => p.roundScore === 0 && p.turns === 0 && p.last === null));
+  assert.ok(!s.roundOver);
+  while (!s.over) s = G.applyMove(s, aiMove(s));
+  assert.ok(!s.roundOver);
+  assert.equal(s.summary.round, 2);
+  assert.ok(s.winners.length >= 1);
+  assert.throws(() => G.nextRound(s));
+  const best = Math.max(...s.players.map(p => p.score));
+  assert.ok(s.winners.every(i => s.players[i].score === best));
+});
+
+test('Turns mode: a hand with no play is replaced at the start of the turn; still stuck → pass allowed', () => {
+  let s = G.newGame({ seed: 7, players: twoAI, mode: 'turns', boardSize: 3 });
+  // fill the 3×3 board except one cell that only a red circle can take, then give the mover an unplayable hand
+  s = G.cloneState(s);
+  s.board = boardOf([[0, 0, T(0, 0)], [-1, 0, T(1, 0)], [1, 0, T(2, 0)], [-1, -1, T(1, 1)], [0, -1, T(0, 1)], [1, -1, T(2, 1)], [-1, 1, T(1, 2)], [0, 1, T(0, 2)]]);
+  // open cell (1,1): row needs shape of the row (1,2),(0,2) → colour yellow(2) with a new shape; column x=1 has cross(2) red/orange → cross; so yellow cross T(2,2) fits
+  s.players[s.turn].hand = [T(5, 5), T(5, 5), T(5, 5), T(5, 5), T(5, 5), T(5, 5)];
+  assert.ok(!G.hasPlay(s));
+  // moving the other player hands the turn over and triggers the redraw check for the stuck player
+  const other = (s.turn + 1) % 2;
+  s.turn = other;
+  s.players[other].hand = [T(2, 2)];
+  s = G.applyMove(s, { type: 'play', placements: [P(1, 1, T(2, 2))] });
+  // now the board is full: the stuck player can only pass
+  assert.equal(s.turnEvent?.type, 'redraw');
+  assert.equal(s.turnEvent.n, 3);
+  assert.ok(G.canPass(s));
+  assert.ok(G.validateMove(s, { type: 'pass' }).ok);
+  assert.ok(G.validateMove(s, { type: 'exchange', tiles: [s.players[s.turn].hand[0]] }).ok, 'swapping is allowed in endless-pool modes');
+  s = G.applyMove(s, { type: 'pass' });
+  s = G.applyMove(s, { type: 'pass' });
+  assert.ok(s.roundOver || s.over, 'everyone passed → round over');
+});
+
+test('Goal mode: the round ends as soon as a player reaches the goal; unlimited board', () => {
+  let s = G.newGame({ seed: 33, players: twoAI, mode: 'goal', rounds: 1, pointsGoal: 25 });
+  assert.equal(G.bounds(s), null);
+  let n = 0;
+  while (!s.over) { s = G.applyMove(s, aiMove(s)); assert.ok(n++ < 200); }
+  const top = Math.max(...s.players.map(p => p.roundScore));
+  assert.ok(top >= 25);
+  assert.ok(s.players.filter(p => p.roundScore >= 25).length === 1);
+  assert.equal(s.round, 1);
+  assert.ok(s.winners.every(i => s.players[i].roundScore === top));
+});
+
+test('Bag mode: no swapping, one extra tile when stuck, pass allowed after drawing, round ends when the bag is empty and all pass', () => {
+  let s = G.newGame({ seed: 9, players: twoAI, mode: 'bag', rounds: 1, boardSize: 9 });
+  assert.equal(G.validateMove(s, { type: 'exchange', tiles: [s.players[s.turn].hand[0]] }).reason, 'no-swap');
+  assert.equal(G.validateMove(s, { type: 'pass' }).reason, 'pass-not-allowed');
+  // stuck player draws one tile at the start of the turn
+  let q = G.cloneState(s);
+  const mover = q.turn, other = (q.turn + 1) % 2;
+  q.turn = other;
+  q.players[mover].hand = [T(5, 5), T(5, 5), T(5, 5), T(5, 5), T(5, 5), T(5, 5)];
+  q.board = boardOf([[0, 0, T(0, 0)]]);
+  q.players[other].hand = [T(1, 0), T(2, 0)];
+  const bagBefore = q.bag.length;
+  q = G.applyMove(q, { type: 'play', placements: [P(1, 0, T(1, 0))] });
+  assert.equal(q.turn, mover);
+  assert.equal(q.players[mover].hand.length, 7, 'drew one extra tile');
+  assert.equal(q.bag.length, bagBefore - 5 - 1, 'other refilled to six, mover drew one');
+  assert.equal(q.turnEvent?.type, 'draw');
+  assert.ok(q.drew);
+  assert.ok(G.canPass(q), 'may pass after drawing (even if the new tile happens to play)');
+  // a full AI game drains the bag and ends with everybody passing
+  let n = 0;
+  while (!s.over) {
+    const m = aiMove(s);
+    assert.ok(G.validateMove(s, m).ok, JSON.stringify(m));
+    s = G.applyMove(s, m);
+    assert.equal(G.tileCount(s), 109);
+    assert.ok(n++ < 600);
+  }
+  assert.equal(s.bag.length, 0);
+  assert.ok(s.passes >= 2);
+  assert.ok(s.players.every(p => !G.hasPlay(s, p)));
+});
+
+test('AI vs AI games terminate in every mode with 2–4 players and legal moves only', () => {
+  let seed = 900;
+  for (const mode of ['turns', 'goal', 'bag']) {
+    for (const n of [2, 3, 4]) {
+      const players = [];
+      for (let i = 0; i < n; i++) players.push({ name: 'p' + i, ai: STRATEGY_IDS[(i + seed) % STRATEGY_IDS.length] });
+      let s = G.newGame({ seed: seed++, players, mode, rounds: 2, turnsPerRound: 4, boardSize: n === 4 ? 0 : 13, pointsGoal: 40 });
+      let moves = 0, rounds = 1;
+      const rng = makeRng(seed);
+      while (!s.over) {
+        if (s.roundOver) { s = G.nextRound(s); rounds++; continue; }
+        const m = AI.chooseMove(s, s.turn, s.players[s.turn].ai, 60, rng);
+        const v = G.validateMove(s, m);
+        assert.ok(v.ok, `${mode}: ${v.message} ${JSON.stringify(m)}`);
+        s = G.applyMove(s, m);
+        assert.ok(moves++ < 1500, `${mode} ×${n} did not terminate`);
+      }
+      assert.equal(rounds, 2, `${mode} ×${n}: played both rounds`);
+      assert.ok(s.winners.length >= 1);
+      assert.ok(s.players.some(p => p.score > 0));
+      if (mode === 'turns') assert.ok(s.players.every(p => p.turns <= 4));
+    }
+  }
+});
+
+test('serialisation round-trips in round modes and migrates old classic saves', () => {
+  let s = G.newGame({ seed: 8, players: [{ name: 'a' }, { name: 'b', ai: 'builder' }], mode: 'turns', turnsPerRound: 1, rounds: 2 });
+  while (!s.roundOver) s = G.applyMove(s, aiMove(s));
+  const back = G.fromJSON(JSON.parse(JSON.stringify(G.toJSON(s))));
+  assert.deepEqual(back, s);
+  assert.deepEqual(G.nextRound(back), G.nextRound(s));
+  // a save written before modes existed
+  const old = JSON.parse(JSON.stringify(G.toJSON(G.newGame({ seed: 1, players: twoAI }))));
+  delete old.cfg.mode; delete old.draws; delete old.round; delete old.roundOver; delete old.summary; delete old.drew; delete old.turnEvent; delete old.firstPlayer;
+  for (const p of old.players) { delete p.roundScore; delete p.turns; }
+  const m = G.fromJSON(old);
+  assert.equal(m.cfg.mode, 'classic');
+  assert.equal(m.round, 1);
+  assert.ok(G.validateMove(m, { type: 'play', placements: [P(0, 0, m.players[0].hand[0])] }).ok);
 });

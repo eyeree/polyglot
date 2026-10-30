@@ -29,6 +29,14 @@ export const key = (x, y) => x + ',' + y;
 export function parseKey(k) { const i = k.indexOf(','); return { x: Number(k.slice(0, i)), y: Number(k.slice(i + 1)) }; }
 export const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
+/** Limits of a square board of `n` cells centred on the origin (null when n is 0/unlimited). */
+export function squareBounds(n) {
+  if (!n || n <= 0) return null;
+  const lo = -Math.floor(n / 2);
+  return { minX: lo, maxX: lo + n - 1, minY: lo, maxY: lo + n - 1 };
+}
+export const inBounds = (b, x, y) => !b || (x >= b.minX && x <= b.maxX && y >= b.minY && y <= b.maxY);
+
 export function boardBounds(board) {
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   for (const k of board.keys()) {
@@ -38,15 +46,15 @@ export function boardBounds(board) {
   return board.size ? { minX, maxX, minY, maxY } : null;
 }
 
-/** Empty cells orthogonally adjacent to a tile (or just the origin on an empty board). */
-export function anchorCells(board) {
+/** Empty cells orthogonally adjacent to a tile (or just the origin on an empty board), inside `bounds` if given. */
+export function anchorCells(board, bounds = null) {
   if (board.size === 0) return [{ x: 0, y: 0 }];
   const out = new Map();
   for (const k of board.keys()) {
     const { x, y } = parseKey(k);
     for (const [dx, dy] of DIRS) {
       const nk = key(x + dx, y + dy);
-      if (!board.has(nk) && !out.has(nk)) out.set(nk, { x: x + dx, y: y + dy });
+      if (!board.has(nk) && !out.has(nk) && inBounds(bounds, x + dx, y + dy)) out.set(nk, { x: x + dx, y: y + dy });
     }
   }
   return [...out.values()];
@@ -89,19 +97,26 @@ function mix(a, b, c) {
 
 /**
  * Deterministic bonus for a cell: null or { id, type: 'add'|'mul', n, label, color }.
- * opts: { density (default BONUS default 0.08), kinds, safeRadius }.
+ * opts: { density (default 0.08), kinds (default BONUS.kinds), types ('all'|'add'|'mul'|'none'), safeRadius }.
+ * An 'add' kind with min/max pays a value chosen per cell from that range.
  */
 export function bonusAt(seed, x, y, opts = {}) {
   const density = opts.density ?? 0.08;
   const safe = opts.safeRadius ?? BONUS.safeRadius;
-  if (density <= 0 || Math.abs(x) + Math.abs(y) <= safe) return null;
+  const types = opts.types || 'all';
+  if (types === 'none' || density <= 0 || Math.abs(x) + Math.abs(y) <= safe) return null;
   const h1 = mix(seed, x, y);
   if (h1 / 4294967296 >= density) return null;
-  const kinds = opts.kinds || BONUS.kinds;
+  const kinds = (opts.kinds || BONUS.kinds).filter(k => types === 'all' || k.type === types);
   const total = kinds.reduce((s, k) => s + k.weight, 0);
-  let r = (mix(h1, y, x) / 4294967296) * total;
-  for (const k of kinds) { r -= k.weight; if (r < 0) return k; }
-  return kinds[kinds.length - 1];
+  if (!kinds.length || total <= 0) return null;
+  const h2 = mix(h1, y, x);
+  let r = (h2 / 4294967296) * total;
+  let kind = kinds[kinds.length - 1];
+  for (const k of kinds) { r -= k.weight; if (r < 0) { kind = k; break; } }
+  let n = kind.n;
+  if (kind.min != null) n = kind.min + (mix(h2, x, y) % (kind.max - kind.min + 1));
+  return { id: kind.id, type: kind.type, n, label: kind.type === 'add' ? '+' + n : '×' + n, color: kind.color };
 }
 
 /** bonus lookup bound to a game seed/config. */
@@ -116,6 +131,9 @@ export const REASONS = {
   'not-a-line': 'Tiles must be in one row or column',
   gap: 'Tiles must form one unbroken line',
   'not-connected': 'Tiles must touch tiles already on the board',
+  chain: 'Every tile must touch another tile you played this turn',
+  'off-board': 'That cell is outside the board',
+  'no-swap': 'There is no swapping in this mode: if you cannot play you draw a tile',
   origin: 'The first move must cover the centre cell',
   'too-long': 'A line can hold at most 6 tiles',
   duplicate: 'Duplicate tile in a line',
@@ -158,29 +176,54 @@ export function affectedLines(view, placements) {
   return lines;
 }
 
+/** Are these cells one 4-connected group? */
+export function isConnected(cells) {
+  if (cells.length <= 1) return true;
+  const set = new Set(cells.map(c => key(c.x, c.y)));
+  const seen = new Set([key(cells[0].x, cells[0].y)]);
+  const stack = [cells[0]];
+  while (stack.length) {
+    const { x, y } = stack.pop();
+    for (const [dx, dy] of DIRS) {
+      const k = key(x + dx, y + dy);
+      if (set.has(k) && !seen.has(k)) { seen.add(k); stack.push({ x: x + dx, y: y + dy }); }
+    }
+  }
+  return seen.size === set.size;
+}
+
 /**
- * validate(board, placements) -> { ok } | { ok: false, reason, message }
- * placements: [{x, y, tile}]. Checks geometry (one line, contiguous, connected) and every affected line.
+ * validate(board, placements, opts?) -> { ok } | { ok: false, reason, message }
+ * placements: [{x, y, tile}]. opts: { chain, bounds }.
+ * Line mode (default): the tiles sit in one row or column with no gaps and touch the board.
+ * Chain mode: the tiles form one connected group (each touches another placed this turn) and the group touches the board.
+ * Both: every affected line must be a valid Abstrackle line.
  */
-export function validate(board, placements) {
+export function validate(board, placements, opts = {}) {
   if (!placements || placements.length === 0) return fail('empty');
+  const bounds = opts.bounds || null;
   const seen = new Set();
   for (const p of placements) {
     const k = key(p.x, p.y);
+    if (!inBounds(bounds, p.x, p.y)) return fail('off-board');
     if (board.has(k) || seen.has(k)) return fail('occupied');
     seen.add(k);
   }
-  const sameRow = placements.every(p => p.y === placements[0].y);
-  const sameCol = placements.every(p => p.x === placements[0].x);
-  if (!sameRow && !sameCol) return fail('not-a-line');
+  if (opts.chain) {
+    if (!isConnected(placements)) return fail('chain');
+  } else {
+    const sameRow = placements.every(p => p.y === placements[0].y);
+    const sameCol = placements.every(p => p.x === placements[0].x);
+    if (!sameRow && !sameCol) return fail('not-a-line');
+  }
   if (board.size === 0) {
     if (!placements.some(p => p.x === 0 && p.y === 0)) return fail('origin');
   } else if (!placements.some(p => hasNeighbor(board, p.x, p.y))) {
     return fail('not-connected');
   }
   const view = overlay(board, placements);
-  if (placements.length > 1) {
-    const horiz = sameRow;
+  if (!opts.chain && placements.length > 1) {
+    const horiz = placements.every(p => p.y === placements[0].y);
     const coords = placements.map(p => horiz ? p.x : p.y);
     const lo = Math.min(...coords), hi = Math.max(...coords);
     for (let i = lo; i <= hi; i++) {
@@ -234,15 +277,20 @@ function nextEmpty(view, x, y, dx, dy) {
 }
 
 /**
- * legalPlacements(board, hand) -> [placements[]]: every legal play (as a list of {x,y,tile}) for this hand.
- * Anchors are empty cells next to a tile; from an anchor each distinct tile is tried, then the line is
- * grown along each axis — first towards +∞, then towards −∞ (so each cell set is generated once per
- * anchor) — skipping over existing tiles and validating every step. Deduplicated by playKey.
+ * legalPlacements(board, hand, opts?) -> [placements[]]: every legal play (as a list of {x,y,tile}) for this hand.
+ * opts: { chain, bounds, prune }. Deduplicated by playKey.
+ * Line mode: anchors are empty cells next to a tile; from an anchor each distinct tile is tried, then the line is
+ * grown along each axis — first towards +∞, then towards −∞ (so each cell set is generated once per anchor) —
+ * skipping over existing tiles and validating every step.
+ * Chain mode: breadth-first by tile count; a partial play grows into any empty cell next to one of its tiles.
+ * `prune(level)` (chain mode) may return a subset of the partial plays to grow from at each depth (beam search).
  */
-export function legalPlacements(board, hand) {
+export function legalPlacements(board, hand, opts = {}) {
+  if (opts.chain) return chainPlacements(board, hand, opts);
   const out = new Map();
   const distinct = [...new Set(hand)];
-  const anchors = anchorCells(board);
+  const bounds = opts.bounds || null;
+  const anchors = anchorCells(board, bounds);
   const remove = (arr, t) => { const i = arr.indexOf(t); const c = arr.slice(); c.splice(i, 1); return c; };
 
   const grow = (placements, rest, dx, dy, allowPos) => {
@@ -258,8 +306,9 @@ export function legalPlacements(board, hand) {
     ends.push({ cell: nextEmpty(view, lo.x, lo.y, -dx, -dy), pos: false });
     for (const t of new Set(rest)) {
       for (const e of ends) {
+        if (!inBounds(bounds, e.cell.x, e.cell.y)) continue;
         const next = [...placements, { x: e.cell.x, y: e.cell.y, tile: t }];
-        if (!validate(board, next).ok) continue;
+        if (!validate(board, next, opts).ok) continue;
         const k = playKey(next);
         if (!out.has(k)) out.set(k, next);
         grow(next, remove(rest, t), dx, dy, e.pos);
@@ -270,7 +319,7 @@ export function legalPlacements(board, hand) {
   for (const a of anchors) {
     for (const t of distinct) {
       const first = [{ x: a.x, y: a.y, tile: t }];
-      if (!validate(board, first).ok) continue;
+      if (!validate(board, first, opts).ok) continue;
       out.set(playKey(first), first);
       const rest = remove(hand, t);
       grow(first, rest, 1, 0, true);
@@ -280,9 +329,54 @@ export function legalPlacements(board, hand) {
   return [...out.values()];
 }
 
-export function hasAnyPlay(board, hand) {
-  // cheap check: a single tile somewhere is enough for "a play exists"
+function chainPlacements(board, hand, opts) {
+  const bounds = opts.bounds || null;
+  const all = new Map();
+  let level = [];
   const distinct = [...new Set(hand)];
-  for (const a of anchorCells(board)) for (const t of distinct) if (validate(board, [{ x: a.x, y: a.y, tile: t }]).ok) return true;
+  for (const a of anchorCells(board, bounds)) {
+    for (const t of distinct) {
+      const first = [{ x: a.x, y: a.y, tile: t }];
+      if (!validate(board, first, opts).ok) continue;
+      all.set(playKey(first), first);
+      level.push(first);
+    }
+  }
+  for (let depth = 2; depth <= hand.length && level.length; depth++) {
+    const from = opts.prune ? opts.prune(level) : level;
+    const next = [];
+    for (const partial of from) {
+      const rest = hand.slice();
+      for (const p of partial) rest.splice(rest.indexOf(p.tile), 1);
+      const tiles = [...new Set(rest)];
+      const used = new Set(partial.map(p => key(p.x, p.y)));
+      const frontier = new Map();
+      for (const p of partial) {
+        for (const [dx, dy] of DIRS) {
+          const x = p.x + dx, y = p.y + dy, k = key(x, y);
+          if (board.has(k) || used.has(k) || frontier.has(k) || !inBounds(bounds, x, y)) continue;
+          frontier.set(k, { x, y });
+        }
+      }
+      for (const c of frontier.values()) {
+        for (const t of tiles) {
+          const grown = [...partial, { x: c.x, y: c.y, tile: t }];
+          const k = playKey(grown);
+          if (all.has(k)) continue;
+          if (!validate(board, grown, opts).ok) continue;
+          all.set(k, grown);
+          next.push(grown);
+        }
+      }
+    }
+    level = next;
+  }
+  return [...all.values()];
+}
+
+/** Does any play exist? Exact and cheap: every legal play contains a legal single-tile play. */
+export function hasAnyPlay(board, hand, opts = {}) {
+  const distinct = [...new Set(hand)];
+  for (const a of anchorCells(board, opts.bounds || null)) for (const t of distinct) if (validate(board, [{ x: a.x, y: a.y, tile: t }], opts).ok) return true;
   return false;
 }

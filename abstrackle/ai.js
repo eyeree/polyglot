@@ -2,15 +2,26 @@
 // difficulty-controlled amount of randomness. Strategies live in config.js:STRATEGIES.
 import { STRATEGIES, AI } from './config.js';
 import * as R from './rules.js';
-import { bonusFn as gameBonusFn } from './game.js';
+import { bonusFn as gameBonusFn, rulesOpts, poolSize } from './game.js';
 
 /**
  * enumeratePlays(board, hand, rules?) -> [{ placements, score, breakdown }]
- * rules: { bonusFn, bonusMode } (optional; without them plays are scored without bonuses).
+ * rules: { bonusFn, bonusMode, chain, bounds, beam } (optional; without bonusFn plays are scored without bonuses).
+ * In chain mode the space of connected plays is far too big to list, so when `beam` is set (default AI.beam) only
+ * the `beam` best-scoring partial plays are grown at each tile count; beam 0 enumerates everything.
  */
 export function enumeratePlays(board, hand, rules = {}) {
-  return R.legalPlacements(board, hand).map(placements => {
-    const breakdown = R.scoreMove(board, placements, rules.bonusFn || null, rules.bonusMode || 'line');
+  const score = (placements) => R.scoreMove(board, placements, rules.bonusFn || null, rules.bonusMode || 'line');
+  const opts = { chain: !!rules.chain, bounds: rules.bounds || null };
+  if (opts.chain) {
+    const beam = rules.beam ?? AI.beam;
+    const scores = new Map();
+    const scored = (pl) => { const k = R.playKey(pl); let v = scores.get(k); if (!v) { v = score(pl); scores.set(k, v); } return v; };
+    if (beam > 0) opts.prune = (level) => level.length <= beam ? level : level.map(pl => ({ pl, t: scored(pl).total })).sort((a, b) => b.t - a.t).slice(0, beam).map(x => x.pl);
+    return R.legalPlacements(board, hand, opts).map(placements => { const breakdown = scored(placements); return { placements, score: breakdown.total, breakdown }; });
+  }
+  return R.legalPlacements(board, hand, opts).map(placements => {
+    const breakdown = score(placements);
     return { placements, score: breakdown.total, breakdown };
   });
 }
@@ -101,15 +112,16 @@ export function chooseMove(state, playerIdx, strategyId, difficulty = 100, rng =
   const player = state.players[playerIdx];
   const hand = player.hand;
   const board = state.board;
-  const bag = state.bag;
+  const supply = poolSize(state);
+  const canSwap = state.cfg.mode !== 'bag' && supply > 0;
   const rnd = rng || { next: () => 0, int: () => 0 };
 
-  const plays = enumeratePlays(board, hand, { bonusFn: gameBonusFn(state), bonusMode: state.cfg.bonusMode });
+  const plays = enumeratePlays(board, hand, { bonusFn: gameBonusFn(state), bonusMode: state.cfg.bonusMode, ...rulesOpts(state) });
   const exchange = () => {
-    const tiles = weakestTiles(hand, Math.min(hand.length, bag.length));
+    const tiles = weakestTiles(hand, Math.min(hand.length, supply));
     return { type: 'exchange', tiles };
   };
-  if (plays.length === 0) return bag.length > 0 ? exchange() : { type: 'pass' };
+  if (plays.length === 0) return canSwap ? exchange() : { type: 'pass' };
 
   for (const p of plays) p.value = evaluatePlay(p, hand, board, strat);
   plays.sort((a, b) => b.value - a.value);
@@ -117,7 +129,7 @@ export function chooseMove(state, playerIdx, strategyId, difficulty = 100, rng =
 
   // Exchange instead of a weak play: never on the first move, never twice in a row (keeps games moving),
   // only when the bag is full enough, and (for hand builders) only when the hand itself is weak.
-  const bagEnough = strat.aggressiveExchange ? bag.length >= 1 : bag.length >= hand.length;
+  const bagEnough = canSwap && (strat.aggressiveExchange ? supply >= 1 : supply >= hand.length);
   const weakHand = strat.weakHandMax == null || handSynergy(hand) <= strat.weakHandMax;
   if (best.score <= (strat.exchangeThreshold ?? 0) && bagEnough && board.size > 0 && player.last?.type !== 'exchange' && weakHand) return exchange();
 

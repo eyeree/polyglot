@@ -1,5 +1,11 @@
 // Abstrackle tweakables. Runtime-adjustable ones are also exposed in the ⚙ drawer (see SETTINGS_SCHEMA in main.js).
 export const DEFAULTS = {
+  // game mode (applied to new games): a key of MODES
+  mode: 'classic',
+  rounds: 5,                   // rounds per game (Turns / Goal / Bag modes)
+  turnsPerRound: 5,            // Turns mode: turns each player gets per round
+  boardSize: 15,               // Turns / Bag modes: side of the square board (0 = unlimited)
+  pointsGoal: 100,             // Goal mode: round points that end the round
   // opponents (applied to new games)
   opponents: 2,                // 1–3 AI players
   strategy1: 'random',         // 'random' or a key of STRATEGIES
@@ -7,7 +13,8 @@ export const DEFAULTS = {
   strategy3: 'random',
   difficulty: 85,              // 0–100: how often the AI picks its best move
   // bonus cells (applied to new games)
-  bonusDensity: 0.08,          // fraction of cells that carry a bonus
+  bonusDensity: 0.08,          // fraction of cells that carry a bonus (0 = none)
+  bonusTypes: 'all',           // 'all' | 'add' (+n only) | 'mul' (×n only) | 'none'
   bonusMode: 'line',           // 'line': ×n multiplies the lines through that tile · 'move': ×n multiplies the whole move
   // visuals / pacing
   tileSize: 44,                // board cell size in px
@@ -30,14 +37,39 @@ export const COPIES = 3;             // of each shape/colour tile → 108 tiles
 export const HAND_SIZE = 6;
 export const FULL_LINE_SCORE = 12;     // a completed line of 6
 export const END_BONUS = 6;          // for emptying your hand once the bag is empty
-export const STALL_LIMIT = 30;       // safety: consecutive turns without a play before the game is called
+export const STALL_LIMIT = 30;       // safety: consecutive turns without a play before the game (or round) is called
+export const MAX_REDRAWS = 3;        // Turns / Goal modes: hand replacements tried when nothing can be played, then the turn is passed
 
-// Bonus cells: deterministic from the seed (see rules.js:bonusAt). `weight`s are relative.
+// Game modes. 'classic' is the original game; the others follow "6 tiles in a row": every round starts with one
+// random tile in the centre, the first player is random in round 1 and rotates after that, tiles played in a turn
+// form a connected chain (each must touch another tile played that turn), and round points add up to a game total.
+export const MODES = {
+  classic: {
+    name: 'Classic', pool: 'bag', chain: false, bounded: false,
+    blurb: 'Unlimited board, one bag of 108 tiles, lines only. Ends when the bag is empty and someone goes out.',
+  },
+  turns: {
+    name: 'Turns', pool: 'infinite', chain: true, bounded: true,
+    blurb: 'Fixed-size board, endless tiles. Each player gets a set number of turns per round; most points after all rounds wins.',
+  },
+  goal: {
+    name: 'Goal', pool: 'infinite', chain: true, bounded: false,
+    blurb: 'Unlimited board, endless tiles. A round ends as soon as someone reaches the points goal.',
+  },
+  bag: {
+    name: 'Bag', pool: 'bag', chain: true, bounded: true,
+    blurb: 'One bag of 108 tiles per round. No swapping: if you cannot play you draw one extra tile and may pass. The round ends when the bag is empty and nobody can play.',
+  },
+};
+export const MODE_IDS = Object.keys(MODES);
+
+// Bonus cells: deterministic from the seed (see rules.js:bonusAt). `weight`s are relative. An 'add' kind pays a
+// value drawn uniformly from min..max; a 'mul' kind multiplies by `n`. `bonusTypes` ('all' | 'add' | 'mul' | 'none')
+// in the settings picks which kinds are in play.
 export const BONUS = {
   safeRadius: 1,               // cells within this Manhattan distance of the origin are never bonus
   kinds: [
-    { id: 'add1', type: 'add', n: 1, weight: 40, label: '+1', color: '#4f8cff' },
-    { id: 'add2', type: 'add', n: 2, weight: 30, label: '+2', color: '#4fd18b' },
+    { id: 'add', type: 'add', min: 4, max: 12, weight: 70, label: '+n', color: '#4fd18b' },
     { id: 'mul2', type: 'mul', n: 2, weight: 20, label: '×2', color: '#ffb347' },
     { id: 'mul3', type: 'mul', n: 3, weight: 10, label: '×3', color: '#ff5da2' },
   ],
@@ -45,7 +77,8 @@ export const BONUS = {
 
 // AI difficulty: with probability (100 − difficulty)/100 the AI picks uniformly among moves within `slack`
 // points of the best (or the top `topK` if fewer than 2 qualify) instead of the best.
-export const AI = { slack: 4, topK: 5 };
+// `beam`: in chain modes the AI keeps only the best `beam` partial plays per extra tile (the full space is huge).
+export const AI = { slack: 4, topK: 5, beam: 120 };
 
 // Strategy weight sets consumed by ai.js:chooseMove.
 export const STRATEGIES = {

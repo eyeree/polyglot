@@ -2,7 +2,7 @@
 import { h, $, clear, modal, confirm, toast, settingsPanel, drawer } from '../shared/ui.js';
 import { makeSettings, load, save } from '../shared/storage.js';
 import { makeRng, randomSeed, hashString } from '../shared/rng.js';
-import { DEFAULTS, SHAPES, COLORS, BONUS, STRATEGIES, STRATEGY_IDS, AI_NAMES, HAND_SIZE, END_BONUS } from './config.js';
+import { DEFAULTS, SHAPES, COLORS, BONUS, STRATEGIES, STRATEGY_IDS, AI_NAMES, HAND_SIZE, END_BONUS, MODES, MODE_IDS, MAX_REDRAWS } from './config.js';
 import * as R from './rules.js';
 import * as G from './game.js';
 import * as AI from './ai.js';
@@ -12,15 +12,23 @@ const MARGIN = 2;                 // empty cells kept around the played area
 const settings = makeSettings('abstrackle.settings', DEFAULTS);
 
 const strategyOptions = [{ value: 'random', label: 'Random' }, ...STRATEGY_IDS.map(id => ({ value: id, label: STRATEGIES[id].name }))];
+const boardSizeOptions = [{ value: 0, label: 'Unlimited' }];
+for (let n = 9; n <= 25; n += 2) boardSizeOptions.push({ value: n, label: `${n} × ${n}` });
 const SETTINGS_SCHEMA = [
+  { key: 'mode', label: 'Game mode', type: 'select', options: MODE_IDS.map(id => ({ value: id, label: MODES[id].name })), help: 'Applies to new games · see Help for the rules' },
+  { key: 'rounds', label: 'Rounds per game', type: 'range', min: 1, max: 10, step: 1, help: 'Turns, Goal and Bag modes' },
+  { key: 'turnsPerRound', label: 'Turns per round', type: 'range', min: 3, max: 7, step: 1, help: 'Turns mode' },
+  { key: 'boardSize', label: 'Board size', type: 'select', options: boardSizeOptions, help: 'Turns and Bag modes' },
+  { key: 'pointsGoal', label: 'Points goal', type: 'range', min: 20, max: 300, step: 10, help: 'Goal mode: round points that end the round' },
   { key: 'opponents', label: 'Opponents', type: 'range', min: 1, max: 3, step: 1, help: 'Applies to new games' },
   { key: 'strategy1', label: 'Opponent 1 strategy', type: 'select', options: strategyOptions },
   { key: 'strategy2', label: 'Opponent 2 strategy', type: 'select', options: strategyOptions },
   { key: 'strategy3', label: 'Opponent 3 strategy', type: 'select', options: strategyOptions },
   { key: 'difficulty', label: 'AI difficulty', type: 'range', min: 0, max: 100, step: 5, help: 'How often opponents pick their best move' },
+  { key: 'bonusTypes', label: 'Bonus cells', type: 'select', options: [{ value: 'all', label: '+n and ×n' }, { value: 'add', label: '+n only' }, { value: 'mul', label: '×n only' }, { value: 'none', label: 'None' }], help: 'Applies to new games' },
   { key: 'bonusDensity', label: 'Bonus cell density', type: 'range', min: 0, max: 0.25, step: 0.01, help: 'Applies to new games' },
   { key: 'bonusMode', label: '×n multiplies', type: 'select', options: [{ value: 'line', label: 'Lines through it' }, { value: 'move', label: 'Whole move' }], help: 'Applies to new games' },
-  { key: 'tileSize', label: 'Tile size', type: 'range', min: 28, max: 72, step: 2 },
+  { key: 'tileSize', label: 'Tile size', type: 'range', min: 22, max: 72, step: 2 },
   { key: 'aiDelayMs', label: 'AI delay (ms)', type: 'range', min: 0, max: 2000, step: 100 },
   { key: 'showHints', label: 'Highlight legal cells', type: 'bool', help: 'For the selected hand tile' },
   { key: 'showAiHands', label: "Show opponents' tiles", type: 'bool', help: 'Debug / cheat' },
@@ -35,7 +43,7 @@ let swapMode = false;
 let swapSel = new Set();          // hand indices chosen for a swap
 let aiToken = 0, aiBusy = false;
 let layout = null;                // {minX, minY, cell} of the last board render (for stable scrolling)
-let noticedTurn = -1, endShownFor = -1;
+let noticedTurn = -1, endShownFor = -1, roundShownFor = '';
 
 const scroller = $('#board-scroll');
 const boardEl = $('#board');
@@ -74,13 +82,16 @@ function restore() {
 
 // ---------------------------------------------------------------- helpers
 const human = () => game.players[0];
-const isHumanTurn = () => !game.over && !aiBusy && game.players[game.turn].ai == null;
+const isHumanTurn = () => !game.over && !game.roundOver && !aiBusy && game.players[game.turn].ai == null;
+const mode = () => game.cfg.mode;
+const modeName = () => MODES[mode()]?.name || 'Classic';
+const inRounds = () => mode() !== 'classic';
 const plain = (p) => ({ x: p.x, y: p.y, tile: p.tile });
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 let playsCache = { moves: -1, any: null };
 function humanHasPlay() {
-  if (playsCache.moves !== game.moves) playsCache = { moves: game.moves, any: R.hasAnyPlay(game.board, human().hand) };
+  if (playsCache.moves !== game.moves) playsCache = { moves: game.moves, any: G.hasPlay(game, human()) };
   return playsCache.any;
 }
 
@@ -103,7 +114,10 @@ function renderAll(opts = {}) {
 }
 
 function renderTop() {
-  $('#stat-bag').textContent = `Bag ${game.bag.length}`;
+  const m = mode();
+  $('#stat-round').textContent = inRounds() ? `Round ${game.round}/${game.cfg.rounds}` : '';
+  $('#stat-bag').textContent = m === 'turns' ? `Turn ${Math.min(game.cfg.turnsPerRound, (game.players[game.turn]?.turns ?? 0) + (game.roundOver ? 0 : 1))}/${game.cfg.turnsPerRound}`
+    : m === 'goal' ? `Goal ${game.cfg.pointsGoal}` : `Bag ${game.bag.length}`;
 }
 
 function renderPlayers() {
@@ -116,13 +130,15 @@ function renderPlayers() {
     el.append(h('div.player' + (cur ? '.current' : ''), { data: { idx: i }, onClick: () => showPlayer(i) },
       h('div.phead', {}, h('span.pname', { text: p.name }), p.ai ? h('span.badge', { text: STRATEGIES[p.ai]?.name || p.ai }) : null),
       h('div.pscore', {}, h('span.score', { text: String(p.score) }), h('span.delta' + (last?.type === 'play' ? '.pos' : ''), { text: delta })),
-      h('div.ptiles', { text: `${p.hand.length} tile${p.hand.length === 1 ? '' : 's'}` }),
+      h('div.ptiles', { text: inRounds() ? `${p.roundScore} this round${mode() === 'bag' ? ` · ${p.hand.length} tiles` : ''}` : `${p.hand.length} tile${p.hand.length === 1 ? '' : 's'}` }),
       p.ai && settings.get('showAiHands') ? h('div.minihand', {}, p.hand.map(t => tileEl(t, '.mini'))) : null,
     ));
   });
 }
 
 function bounds() {
+  const fixed = G.bounds(game);
+  if (fixed) return fixed;
   let b = R.boardBounds(game.board);
   for (const t of tentative) {
     if (!b) b = { minX: t.x, maxX: t.x, minY: t.y, maxY: t.y };
@@ -184,7 +200,8 @@ function hintCells() {
   for (const t of tentative) consider(t.x, t.y);
   if (game.board.size === 0 && tentative.length === 0) cand.set('0,0', { x: 0, y: 0 });
   const base = tentative.map(plain);
-  for (const [k, c] of cand) if (R.validate(game.board, [...base, { x: c.x, y: c.y, tile }]).ok) out.add(k);
+  const opts = G.rulesOpts(game);
+  for (const [k, c] of cand) if (R.validate(game.board, [...base, { x: c.x, y: c.y, tile }], opts).ok) out.add(k);
   return out;
 }
 
@@ -201,6 +218,7 @@ function renderBoard(opts = {}) {
   boardEl.style.width = cols * cell + 'px';
   boardEl.style.height = rows * cell + 'px';
   boardEl.style.setProperty('--cell', cell + 'px');
+  boardEl.classList.toggle('bounded', !!G.bounds(game));
   const lastKeys = lastMoveKeys();
   const hints = hintCells();
   const bonus = G.bonusFn(game);
@@ -239,6 +257,7 @@ function renderHand() {
   clear(el);
   const hand = human().hand;
   el.classList.toggle('disabled', !isHumanTurn());
+  el.style.setProperty('--n', String(Math.max(HAND_SIZE, hand.length)));
   hand.forEach((t, i) => {
     const used = tentative.some(p => p.handIdx === i);
     const cls = (used ? '.used' : '') + (selected === i ? '.selected' : '') + (swapMode && swapSel.has(i) ? '.swapsel' : '');
@@ -250,6 +269,13 @@ function renderHand() {
 function renderButtons() {
   const turn = isHumanTurn();
   const play = $('#btn-play'), swap = $('#btn-swap'), back = $('#btn-takeback'), pass = $('#btn-pass');
+  if (game.roundOver && !game.over) {
+    play.textContent = 'Next round'; play.disabled = false;
+    swap.classList.add('hidden'); back.classList.add('hidden'); pass.classList.add('hidden');
+    $('#turn-note').textContent = `Round ${game.round} over`;
+    return;
+  }
+  swap.classList.toggle('hidden', mode() === 'bag');
   if (swapMode) {
     play.textContent = swapSel.size ? `Swap ${swapSel.size}` : 'Swap';
     play.disabled = !turn || swapSel.size === 0;
@@ -257,12 +283,12 @@ function renderButtons() {
     back.classList.add('hidden'); pass.classList.add('hidden');
   } else {
     play.textContent = 'Play'; play.disabled = !turn || tentative.length === 0;
-    swap.textContent = 'Swap'; swap.disabled = !turn || game.bag.length === 0;
+    swap.textContent = 'Swap'; swap.disabled = !turn || G.poolSize(game) === 0;
     back.classList.toggle('hidden', tentative.length === 0); back.disabled = !turn;
     pass.classList.toggle('hidden', !(turn && G.canPass(game)));
   }
   const note = $('#turn-note');
-  note.textContent = game.over ? 'Game over' : turn ? (swapMode ? 'Pick tiles to swap' : tentative.length ? 'Tap Play to commit' : selected != null ? 'Tap a cell' : '') : `${game.players[game.turn].name} is thinking…`;
+  note.textContent = game.over ? 'Game over' : turn ? (swapMode ? 'Pick tiles to swap' : tentative.length ? (G.rulesOpts(game).chain ? 'Add tiles next to yours, then Play' : 'Tap Play to commit') : selected != null ? 'Tap a cell' : (game.drew ? 'You drew a tile · play or pass' : '')) : `${game.players[game.turn].name} is thinking…`;
 }
 
 // ---------------------------------------------------------------- input
@@ -327,7 +353,7 @@ function toggleSwap() {
   if (!isHumanTurn()) return;
   if (swapMode) { swapMode = false; swapSel.clear(); }
   else {
-    if (game.bag.length === 0) { toast('The bag is empty'); return; }
+    if (G.poolSize(game) === 0) { toast('The bag is empty'); return; }
     swapMode = true; swapSel.clear(); tentative = []; selected = null;
   }
   renderHand(); renderBoard(); renderButtons();
@@ -359,20 +385,37 @@ async function doPass() {
 function afterHumanTurn() {
   persist();
   renderAll();
-  if (game.over) showEnd(); else runAI();
+  if (game.over) showEnd(); else if (game.roundOver) showRoundEnd(); else runAI();
 }
 
-/** Called when the human's turn begins: nudge when nothing can be played. */
+/** Called when the human's turn begins: explain automatic draws and nudge when nothing can be played. */
 function onHumanTurn() {
-  if (game.over || noticedTurn === game.moves) return;
+  if (game.over || game.roundOver || game.players[game.turn].ai || noticedTurn === game.moves) return;
   noticedTurn = game.moves;
-  if (!humanHasPlay()) toast(game.bag.length ? 'No possible play — swap some tiles' : 'No possible play — you can pass', 3000);
+  const ev = game.turnEvent;
+  const stuck = !humanHasPlay();
+  if (ev?.type === 'draw') toast(stuck ? 'No possible play — you drew a tile and may pass' : 'No possible play — you drew a tile', 3000);
+  else if (ev?.type === 'redraw') toast(stuck ? `No possible play even after ${ev.n} new hands — you can pass` : `No possible play — you got ${ev.n > 1 ? 'new tiles (' + ev.n + ' tries)' : 'new tiles'}`, 3000);
+  else if (stuck) toast(mode() === 'classic' && game.bag.length ? 'No possible play — swap some tiles' : 'No possible play — you can pass', 3000);
+}
+
+async function doNextRound() {
+  if (!game.roundOver || game.over) return false;
+  game = G.nextRound(game);
+  tentative = []; selected = null; swapMode = false; swapSel.clear();
+  layout = null; noticedTurn = -1;
+  persist();
+  renderAll({ center: true });
+  toast(`Round ${game.round} — ${game.players[game.turn].ai ? game.players[game.turn].name + ' opens' : 'you open'}`);
+  onHumanTurn();
+  runAI();
+  return true;
 }
 
 // ---------------------------------------------------------------- AI turns
 async function runAI() {
   const token = ++aiToken;
-  while (!game.over && game.players[game.turn].ai) {
+  while (!game.over && !game.roundOver && game.players[game.turn].ai) {
     aiBusy = true; renderButtons(); renderHand();
     await sleep(Math.max(30, settings.get('aiDelayMs')));
     if (token !== aiToken) return;
@@ -381,12 +424,12 @@ async function runAI() {
   if (token !== aiToken) return;
   aiBusy = false;
   renderButtons(); renderHand();
-  if (game.over) showEnd(); else onHumanTurn();
+  if (game.over) showEnd(); else if (game.roundOver) showRoundEnd(); else onHumanTurn();
 }
 
 /** Play one AI move immediately (also used by the debug hook). */
 function aiStep() {
-  if (game.over) return null;
+  if (game.over || game.roundOver) return null;
   const idx = game.turn, p = game.players[idx];
   if (!p.ai) return null;
   const rng = makeRng(hashString(`${game.seed}:ai:${game.moves}`));
@@ -410,9 +453,14 @@ function startNewGame(seed = randomSeed()) {
     if (!STRATEGIES[s]) s = rng.pick(STRATEGY_IDS);
     players.push({ name: AI_NAMES[i - 1], ai: s });
   }
-  game = G.newGame({ seed, players, bonusDensity: Number(settings.get('bonusDensity')), bonusMode: settings.get('bonusMode') });
+  game = G.newGame({
+    seed, players, mode: settings.get('mode'),
+    bonusDensity: Number(settings.get('bonusDensity')), bonusMode: settings.get('bonusMode'), bonusTypes: settings.get('bonusTypes'),
+    rounds: Number(settings.get('rounds')) || 1, turnsPerRound: Number(settings.get('turnsPerRound')) || 5,
+    boardSize: Number(settings.get('boardSize')) || 0, pointsGoal: Number(settings.get('pointsGoal')) || 100,
+  });
   tentative = []; selected = null; swapMode = false; swapSel.clear();
-  layout = null; noticedTurn = -1; endShownFor = -1;
+  layout = null; noticedTurn = -1; endShownFor = -1; roundShownFor = '';
   persist();
   renderAll({ center: true });
   onHumanTurn();
@@ -425,17 +473,41 @@ async function showEnd() {
   const rows = G.standings(game).map((p, i) => h('div.row.standing' + (game.winners.includes(p.idx) ? '.winner' : ''), {},
     h('span.place', { text: (i + 1) + '.' }),
     h('span.grow', { text: p.name + (p.ai ? ` (${STRATEGIES[p.ai].name})` : '') }),
-    h('span.muted', { text: p.tiles ? `${p.tiles} left` : 'out' }),
+    h('span.muted', { text: inRounds() ? '' : p.tiles ? `${p.tiles} left` : 'out' }),
     h('b', { text: String(p.score) })));
   const w = game.winners;
   const title = w.length > 1 ? 'Tie!' : w[0] === 0 ? 'You win! 🎉' : `${game.players[w[0]].name} wins`;
   const went = game.players.find(p => p.last?.endBonus);
+  const why = inRounds() ? `${modeName()} mode · ${game.cfg.rounds} round${game.cfg.rounds === 1 ? '' : 's'} played. Highest total wins.`
+    : went ? (went.ai ? `${went.name} emptied their hand (+${END_BONUS}).` : `You emptied your hand (+${END_BONUS}).`) : 'Nobody could move.';
   const v = await modal({
     title,
-    body: h('div', {}, h('div.muted', { style: { marginBottom: '8px' }, text: went ? (went.ai ? `${went.name} emptied their hand (+${END_BONUS}).` : `You emptied your hand (+${END_BONUS}).`) : 'Nobody could move.' }), rows),
+    body: h('div', {}, h('div.muted', { style: { marginBottom: '8px' }, text: why }), inRounds() ? roundTable(game.summary) : null, rows),
     buttons: [{ label: 'Close', value: false }, { label: 'New game', value: true, primary: true }],
   });
   if (v) startNewGame();
+}
+
+function roundTable(sum) {
+  if (!sum) return null;
+  return h('div.roundtable', {},
+    h('div.row.rhead', {}, h('span.grow', { text: `Round ${sum.round}` }), h('span.col', { text: 'Round' }), h('span.col', { text: 'Total' })),
+    sum.rows.map(r => h('div.row' + (sum.winners.includes(r.idx) ? '.winner' : ''), {},
+      h('span.grow', { text: r.name }), h('span.col', { text: '+' + r.points }), h('b.col', { text: String(r.total) }))));
+}
+
+async function showRoundEnd() {
+  const key = `${game.round}:${game.moves}`;
+  if (!game.roundOver || game.over || roundShownFor === key) return;
+  roundShownFor = key;
+  const sum = game.summary;
+  const lead = G.standings(game)[0];
+  const v = await modal({
+    title: `Round ${sum.round} of ${game.cfg.rounds} over`,
+    body: h('div', {}, roundTable(sum), h('p.muted', { text: `${lead.idx === 0 ? 'You lead' : lead.name + ' leads'} with ${lead.score}. ${game.players[(game.firstPlayer + game.round) % game.players.length].ai ? game.players[(game.firstPlayer + game.round) % game.players.length].name : 'You'} open${game.players[(game.firstPlayer + game.round) % game.players.length].ai ? 's' : ''} the next round.` })),
+    buttons: [{ label: 'Look at board', value: false }, { label: 'Next round', value: true, primary: true }],
+  });
+  if (v) doNextRound();
 }
 
 /** Explain a player's last move (score breakdown). */
@@ -465,7 +537,7 @@ function showPlayer(i) {
 async function showMenu() {
   const choice = await modal({
     title: 'Abstrackle',
-    body: h('div.muted', { text: `Seed ${game.seed} · move ${game.moves} · bonus ${game.cfg.bonusMode} mode, density ${Math.round(game.cfg.bonusDensity * 100)}%` }),
+    body: h('div.muted', { text: `${modeName()} mode${inRounds() ? ` · round ${game.round}/${game.cfg.rounds}` : ''} · seed ${game.seed} · move ${game.moves} · bonus ${game.cfg.bonusTypes === 'none' ? 'off' : `${game.cfg.bonusMode} mode, density ${Math.round(game.cfg.bonusDensity * 100)}%`}` }),
     buttons: [
       { label: 'Exit', value: 'exit' },
       { label: 'Settings', value: 'settings' },
@@ -486,7 +558,7 @@ async function showMenu() {
 }
 
 async function confirmNew() {
-  if (game.over || game.moves === 0) return true;
+  if (game.over || (game.moves === 0 && !game.roundOver)) return true;
   return confirm('Start a new game? The current one is abandoned.', { ok: 'New game' });
 }
 
@@ -504,7 +576,8 @@ settings.onChange((k) => {
 function showHelp() {
   const legend = BONUS.kinds.map(k => h('div.legend-row', {},
     h('span.legend-swatch', { style: { background: k.color + '40', boxShadow: `inset 0 0 0 1px ${k.color}`, color: k.color }, text: k.label }),
-    h('span', { text: k.type === 'add' ? `adds ${k.n} to the move` : `multiplies ${settings.get('bonusMode') === 'move' ? 'the whole move' : 'the lines through that tile'} by ${k.n}` })));
+    h('span', { text: k.type === 'add' ? `adds ${k.min != null ? `${k.min} to ${k.max}` : k.n} to the move` : `multiplies ${settings.get('bonusMode') === 'move' ? 'the whole move' : 'the lines through that tile'} by ${k.n}` })));
+  const modes = MODE_IDS.map(id => h('p', {}, h('b', {}, MODES[id].name + '. '), MODES[id].blurb));
   modal({
     title: 'How to play', wide: true,
     body: h('div.help', { style: { lineHeight: '1.5' } },
@@ -513,23 +586,26 @@ function showHelp() {
       h('p', {}, h('b', {}, 'Scoring. '), 'Each line that includes one of your new tiles scores its length; completing a line of six is an Abstrackle and scores 12. You then draw back up to six. Instead of playing you may ', h('b', {}, 'Swap'), ' any tiles with the bag. ', h('b', {}, 'Pass'), ' is only possible when neither is. When the bag is empty, the player who goes out scores 6 more and the game ends. Tap a player to see how their last move scored.'),
       h('p', {}, h('b', {}, 'Bonus cells '), 'are scattered over the board (fixed by the seed, none near the centre) and pay out when you cover them:'),
       ...legend,
-      h('p.muted', { text: 'Several bonuses in one move stack: adds are summed, multipliers multiplied. Opponents: Greedy maximises score, Blocker avoids opening 4- and 5-lines, Builder keeps a coherent hand, Opportunist chases multipliers and swaps freely.' }),
+      h('p.muted', { text: 'Several bonuses in one move stack: adds are summed, multipliers multiplied. Bonus cells can be limited to +n or ×n, or turned off, in Settings. Opponents: Greedy maximises score, Blocker avoids opening 4- and 5-lines, Builder keeps a coherent hand, Opportunist chases multipliers and swaps freely.' }),
+      h('h3', { text: 'Game modes', style: { margin: '12px 0 4px' } }),
+      ...modes,
+      h('p.muted', { text: `In Turns, Goal and Bag modes every round starts with one random tile in the centre; the first player is random in round 1 and rotates after that. Tiles played in a turn form a chain: each must touch another tile you played that turn (any shape, not just a line), so a 2×2 block scores four lines of two. If you cannot play, your hand is replaced (up to ${MAX_REDRAWS} times) in Turns and Goal modes; in Bag mode you draw one tile and may pass. Round points add up to your game total; highest total after the last round wins.` }),
     ),
   });
 }
 
 // ---------------------------------------------------------------- wiring
-$('#btn-play').onclick = () => (swapMode ? commitSwap() : commitPlay());
+$('#btn-play').onclick = () => (game.roundOver && !game.over ? doNextRound() : swapMode ? commitSwap() : commitPlay());
 $('#btn-swap').onclick = toggleSwap;
 $('#btn-takeback').onclick = takeBack;
 $('#btn-pass').onclick = async () => { if (await confirm('Pass this turn?', { ok: 'Pass' })) doPass(); };
 $('#btn-menu').onclick = showMenu;
 $('#zoom-in').onclick = () => settings.set('tileSize', Math.min(72, settings.get('tileSize') + 6));
-$('#zoom-out').onclick = () => settings.set('tileSize', Math.max(28, settings.get('tileSize') - 6));
+$('#zoom-out').onclick = () => settings.set('tileSize', Math.max(22, settings.get('tileSize') - 6));
 window.addEventListener('resize', () => renderBoard());
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { if (swapMode) toggleSwap(); else { selected = null; renderHand(); renderBoard(); renderButtons(); } }
-  else if (e.key === 'Enter' && isHumanTurn() && (tentative.length || swapSel.size)) $('#btn-play').click();
+  else if (e.key === 'Enter' && ((isHumanTurn() && (tentative.length || swapSel.size)) || (game.roundOver && !game.over))) $('#btn-play').click();
 });
 
 // ---------------------------------------------------------------- boot
@@ -538,16 +614,16 @@ window.__abstrackle = {
   rules: R, ai: AI, G, settings,
   actions: {
     newGame: startNewGame, select: onHandTap, cell: onCellTap, place: placeTentative, takeBack, play: commitPlay,
-    swapMode: toggleSwap, swap: commitSwap, pass: doPass, aiStep, menu: showMenu, help: showHelp, settings: openSettings,
-    render: renderAll, player: showPlayer,
+    swapMode: toggleSwap, swap: commitSwap, pass: doPass, aiStep, nextRound: doNextRound, menu: showMenu, help: showHelp, settings: openSettings,
+    render: renderAll, player: showPlayer, roundEnd: showRoundEnd,
     /** Debug: replace the game with a serialised state (G.toJSON shape) and continue from it. */
     load(json) {
       const g = G.fromJSON(json);
       if (!g) throw new Error('bad state');
       aiToken++; aiBusy = false; game = g;
-      tentative = []; selected = null; swapMode = false; swapSel.clear(); layout = null; noticedTurn = -1; endShownFor = -1;
+      tentative = []; selected = null; swapMode = false; swapSel.clear(); layout = null; noticedTurn = -1; endShownFor = -1; roundShownFor = '';
       persist(); renderAll({ center: true });
-      if (game.over) showEnd(); else { onHumanTurn(); runAI(); }
+      if (game.over) showEnd(); else if (game.roundOver) showRoundEnd(); else { onHumanTurn(); runAI(); }
       return game;
     },
   },
@@ -555,5 +631,5 @@ window.__abstrackle = {
 if (!restore()) startNewGame();
 else {
   renderAll({ center: true });
-  if (game.over) showEnd(); else { onHumanTurn(); runAI(); }
+  if (game.over) showEnd(); else if (game.roundOver) showRoundEnd(); else { onHumanTurn(); runAI(); }
 }
