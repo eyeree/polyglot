@@ -1,4 +1,4 @@
-// Abstrackle AI. Pure: enumerates every legal play, scores it, applies a strategy's weights and a
+// xTiles AI. Pure: enumerates every legal play, scores it, applies a strategy's weights and a
 // difficulty-controlled amount of randomness. Strategies live in config.js:STRATEGIES.
 import { STRATEGIES, AI } from './config.js';
 import * as R from './rules.js';
@@ -64,7 +64,7 @@ function remainingHand(hand, placements) {
   return rest;
 }
 
-/** Lines of length 4–5 through the played tiles that still have an empty end cell (an Abstrackle invitation). */
+/** Lines of length 4–5 through the played tiles that still have an empty end cell (an xTiles invitation). */
 export function openLinesAfter(board, play) {
   const view = R.overlay(board, play.placements);
   let n = 0;

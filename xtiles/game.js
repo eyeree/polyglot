@@ -1,4 +1,4 @@
-// Abstrackle game state machine. Pure: states are plain objects (board is a Map) and applyMove returns a new state.
+// xTiles game state machine. Pure: states are plain objects (board is a Map) and applyMove returns a new state.
 // Modes (config.js:MODES): 'classic' is the original game; 'turns' / 'goal' / 'bag' play in rounds that start with
 // one random tile in the centre, use chain placement and add round points into a game total.
 import { makeRng, hashString } from '../shared/rng.js';

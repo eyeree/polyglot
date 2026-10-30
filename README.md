@@ -8,7 +8,7 @@ no build step, no dependencies.
 | Yukon solitaire | `yukon/` | Every move is a node in a game tree; jump back to any choice, see untried alternatives, and run a solver to learn which choices keep the deal winnable |
 | Rounds | `rounds/` | 1–5 AI opponents that always play well but with different strategy profiles |
 | Blocks | `blocks/` | Turn-based block fitting with a side slot and rotation points earned by clearing lines |
-| Abstrackle | `abstrackle/` | Bonus cells (+4…+12, ×2, ×3), several AI strategies, a difficulty slider, and three round-based modes with chain placement (Turns, Goal, Bag) |
+| xTiles | `xtiles/` | Bonus cells (+4…+12, ×2, ×3), several AI strategies, a difficulty slider, and three round-based modes with chain placement (Turns, Goal, Bag) |
 
 ## Run
 

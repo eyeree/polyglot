@@ -1,4 +1,4 @@
-// Abstrackle rules: tiles, the board, placement validation, scoring, bonus cells and the
+// xTiles rules: tiles, the board, placement validation, scoring, bonus cells and the
 // enumeration of every legal play for a hand. Pure: no DOM, no randomness.
 import { SHAPES, COLORS, COPIES, FULL_LINE_SCORE, BONUS } from './config.js';
 
@@ -146,7 +146,7 @@ export const REASONS = {
 const fail = (reason) => ({ ok: false, reason, message: REASONS[reason] || reason });
 const OK = { ok: true };
 
-/** Is this sequence of tiles a valid Abstrackle line? (length 1 is trivially fine) */
+/** Is this sequence of tiles a valid xTiles line? (length 1 is trivially fine) */
 export function lineCheck(tiles) {
   if (tiles.length < 2) return OK;
   if (tiles.length > N_SHAPES) return fail('too-long');
@@ -197,7 +197,7 @@ export function isConnected(cells) {
  * placements: [{x, y, tile}]. opts: { chain, bounds }.
  * Line mode (default): the tiles sit in one row or column with no gaps and touch the board.
  * Chain mode: the tiles form one connected group (each touches another placed this turn) and the group touches the board.
- * Both: every affected line must be a valid Abstrackle line.
+ * Both: every affected line must be a valid xTiles line.
  */
 export function validate(board, placements, opts = {}) {
   if (!placements || placements.length === 0) return fail('empty');

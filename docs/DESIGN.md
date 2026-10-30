@@ -27,7 +27,7 @@ shared/  base.css     dark theme, .btn, .topbar, .modal, .drawer, .settings
          pointer.js   onPress(el, {onTap,onDragStart,onDragMove,onDragEnd}), elementAt()
          rng.js       makeRng(seed) -> next/int/range/pick/shuffle, randomSeed(), hashString()
          storage.js   load/save/remove, makeSettings(key, defaults)
-yukon/   rounds/   blocks/   abstrackle/     one folder per game: index.html, <game>.css, config.js, main.js + logic modules
+yukon/   rounds/   blocks/   xtiles/     one folder per game: index.html, <game>.css, config.js, main.js + logic modules
 tests/   *.test.js   node --test tests/
 ```
 
@@ -41,7 +41,7 @@ Page skeleton used by every game:
 ```
 
 There is no back button: the ⋯ menu has an **Exit** item (back to the launcher) in every game. Games with a
-player strip (Rounds, Abstrackle) have no top bar at all; the ⋯ button and the one stat sit at the right end
+player strip (Rounds, xTiles) have no top bar at all; the ⋯ button and the one stat sit at the right end
 of the strip instead.
 
 ---
@@ -204,12 +204,12 @@ tap-cell as fallback; rotate button on the selected block showing the cost. High
 
 ---
 
-## 4. Abstrackle (`abstrackle/`)
+## 4. xTiles (`xtiles/`)
 
 108 tiles: 6 shapes × 6 colours × 3. Hand of 6. A move places ≥ 1 tiles in one line sharing one attribute,
 contiguous with existing tiles; every line (≥ 2) touched must be all-same-colour-different-shapes or
 all-same-shape-different-colours, max 6. Score = sum of lengths of every line (≥ 2) containing a placed
-tile; a 6-line scores 12 (Abstrackle). First move: any valid line, scores its length. Alternative turn:
+tile; a 6-line scores 12 (xTiles). First move: any valid line, scores its length. Alternative turn:
 exchange any tiles with the bag. Game ends when the bag is empty and someone empties their hand
 (+6 bonus), or when nobody can move.
 
@@ -246,8 +246,8 @@ axis in both directions, skipping over existing tiles, pruning by the shared-att
 breadth-first by tile count, growing each partial play into any empty cell next to one of its tiles; the full space
 is huge for coherent hands, so `enumeratePlays` keeps only the `AI.beam` best-scoring partials per depth (beam 0 =
 exhaustive, used by tests).
-Strategies: *Greedy* (max score), *Blocker* (score − penalty for leaving open 4/5-lines others can
-Abstrackle on), *Builder* (score + hand-synergy value of kept tiles), *Opportunist* (greedy but exchanges
+Strategies: *Greedy* (max score), *Blocker* (score − penalty for leaving open 4/5-lines others can score an
+xTiles on), *Builder* (score + hand-synergy value of kept tiles), *Opportunist* (greedy but exchanges
 aggressively when the best move is low). **Difficulty slider**: with probability `p` the AI picks a move
 within `slack` points of the best, or from the top-k, instead of the best. Swapping follows `G.poolSize` (∞ in the
 endless-pool modes, never in Bag mode).

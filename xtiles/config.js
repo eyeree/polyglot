@@ -1,4 +1,4 @@
-// Abstrackle tweakables. Runtime-adjustable ones are also exposed in the ⚙ drawer (see SETTINGS_SCHEMA in main.js).
+// xTiles tweakables. Runtime-adjustable ones are also exposed in the ⚙ drawer (see SETTINGS_SCHEMA in main.js).
 export const DEFAULTS = {
   // game mode (applied to new games): a key of MODES
   mode: 'classic',
@@ -87,7 +87,7 @@ export const STRATEGIES = {
     exchangeThreshold: 0,      // exchange instead of playing when the best play scores ≤ this (and the bag is full enough)
   },
   blocker: {
-    name: 'Blocker', blurb: 'Avoids leaving 4- and 5-lines open for others to Abstrackle on.',
+    name: 'Blocker', blurb: 'Avoids leaving 4- and 5-lines open for others to score an xTiles on.',
     exchangeThreshold: 1,
     openLinePenalty: 3,        // per open 4/5-line the move creates or extends
     closeBonus: 2,             // per existing 4/5-line the move completes
