@@ -122,16 +122,18 @@ export function draw(state, from) {
 
 function removeFromHand(p, ids) { p.hand = p.hand.filter(id => !ids.includes(id)); }
 
-/** Lay down the current phase with exactly these cards (extras must extend the groups). */
-export function layDown(state, ids) {
+/** Checks shared by both lay-down forms. Returns a failure result or null. */
+function layDownChecks(state, ids) {
   if (state.stage !== 'play') return fail('Draw a card first');
   const p = currentPlayer(state);
   if (p.laidDown) return fail('You have already laid down this hand');
   if (p.phase > 10) return fail('All phases are complete');
   if (new Set(ids).size !== ids.length || !ids.every(id => p.hand.includes(id))) return fail('Those cards are not in your hand');
-  const cs = R.cards(ids);
-  const groups = R.canLayDown(cs, p.phase, state.opts);
-  if (!groups) return fail(R.explainLayDown(cs, p.phase, state.opts));
+  return null;
+}
+
+function commitLayDown(state, ids, groups) {
+  const p = currentPlayer(state);
   if (!state.opts.goOutByHit && ids.length === p.hand.length) return fail('Keep one card to discard');
   for (const g of groups) {
     state.table.push({ id: state.nextGroupId++, owner: state.turn, type: g.type, key: g.key, cards: g.cards.map(c => c.id), lo: g.lo, hi: g.hi });
@@ -141,6 +143,31 @@ export function layDown(state, ids) {
   state.turnLog.push(`laid down phase ${p.phase}`);
   if (!p.hand.length) finishHand(state, state.turn);
   return ok();
+}
+
+/** Lay down the current phase with exactly these cards; the rules pick the arrangement (extras must extend the groups). */
+export function layDown(state, ids) {
+  const bad = layDownChecks(state, ids);
+  if (bad) return bad;
+  const p = currentPlayer(state);
+  const cs = R.cards(ids);
+  const groups = R.canLayDown(cs, p.phase, state.opts);
+  if (!groups) return fail(R.explainLayDown(cs, p.phase, state.opts));
+  return commitLayDown(state, ids, groups);
+}
+
+/**
+ * Lay down an explicit arrangement: lists[k] = the card ids of component k in table order (runs low → high, wilds
+ * where they stand). Used by the UI so wilds end up exactly where the player put them.
+ */
+export function layDownGroups(state, lists) {
+  const ids = lists.flat();
+  const bad = layDownChecks(state, ids);
+  if (bad) return bad;
+  const p = currentPlayer(state);
+  const r = R.validateGroups(lists.map(l => R.cards(l)), p.phase, state.opts);
+  if (r.error) return fail(r.error);
+  return commitLayDown(state, ids, r.groups);
 }
 
 /** Hit one card onto a table group. `end` ('low'|'high') matters only for wilds on runs. */

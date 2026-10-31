@@ -25,6 +25,7 @@ const SETTINGS_SCHEMA = [
   { key: 'cardScale', label: 'Card size', type: 'range', min: 0.7, max: 1.3, step: 0.05, help: 'Upper limit; cards shrink to fit the screen' },
   { key: 'sortHand', label: 'Sort hand by', type: 'select', options: [{ value: 'number', label: 'Number' }, { value: 'color', label: 'Colour' }, { value: 'none', label: 'Draw order' }] },
   { key: 'promptLayDown', label: 'Ask to lay down when the slots are complete', type: 'bool' },
+  { key: 'slotHints', label: 'Highlight groups a selected card can join', type: 'bool', help: 'Your phase slots and every laid-down group on the table. Off: spot the plays yourself' },
   { key: 'allowSameNumberSets', label: 'Two sets may share a number', type: 'bool', help: 'e.g. phase 1 with 5-5-5 and 5-5-5' },
   { key: 'goOutByHit', label: 'Go out by hitting the last card', type: 'bool', help: 'Off: a hand only ends with a discard' },
   { key: 'showOpponentHands', label: 'Show opponent hands', type: 'bool', help: 'Cheat / debug' },
@@ -32,39 +33,46 @@ const SETTINGS_SCHEMA = [
 
 // ---------------------------------------------------------------- state
 let state = null;
-const selected = new Set();       // card ids selected in the player's hand (not in the slots)
-let staged = [];                  // staged[slotIndex] = [cardId]: cards set aside in your phase slots
+const selected = new Set();       // card ids selected in your hand
+let staged = [];                  // staged[k] = [cardId]: cards set aside in your phase slot k
+let wildPos = [];                 // wildPos[k] = { cardId: value }: wilds of run slot k you moved to a chosen position
+let picked = null;                // { slot, id }: a wild in one of your run slots, selected so it can be moved to an empty position
 let aiRun = 0;                    // token: bumped to cancel a running AI turn (new game / restore)
 let aiBusy = false;
 let endShownFor = null;           // "hand:stage" key of the summary modal already shown
-let layPromptedFor = null;        // signature of the staged cards the lay-down prompt was last shown for
+let layPromptedFor = null;        // "hand:turn" the lay-down prompt was already shown for
+let humanTurnNo = 0;              // counts your draws, so the lay-down prompt appears at most once per turn
 let logDrawer = null;
 const HUMAN = 0;
 
 const oppsEl = $('#opps'), deckEl = $('#deck'), discardEl = $('#discard'), logEl = $('#log');
 const phaseEl = $('#phase'), hintEl = $('#hint'), stageEl = $('#stage'), handEl = $('#hand'), actionsEl = $('#actions'), statEl = $('#stat');
-const main = $('.p10'), oppsBar = $('.opps-bar'), meHead = $('#me-head'), pilesEl = $('#piles');
+const main = $('.p10'), oppsBar = $('.opps-bar'), meHead = $('#me-head'), pilesEl = $('#piles'), handWrap = $('.hand-wrap');
 const LANDSCAPE = window.matchMedia('(orientation: landscape) and (min-width: 640px)');
 
 // ---------------------------------------------------------------- persistence
 function persist() { save(SAVE_KEY, state); }
-function persistUi() { save(UI_KEY, { seed: state.seed, hand: state.hand, staged }); }
+function persistUi() { save(UI_KEY, { seed: state.seed, hand: state.hand, staged, wildPos }); }
 function restore() {
   const s = load(SAVE_KEY);
   if (!G.isValidState(s)) return false;
   state = s;
   const ui = load(UI_KEY);
-  staged = ui && ui.seed === state.seed && ui.hand === state.hand && Array.isArray(ui.staged) ? ui.staged.map(a => Array.isArray(a) ? a.map(Number) : []) : [];
+  const mine = ui && ui.seed === state.seed && ui.hand === state.hand;
+  staged = mine && Array.isArray(ui.staged) ? ui.staged.map(a => Array.isArray(a) ? a.map(Number) : []) : [];
+  wildPos = mine && Array.isArray(ui.wildPos) ? ui.wildPos.map(o => (o && typeof o === 'object' ? { ...o } : {})) : [];
   return true;
 }
 
 // ---------------------------------------------------------------- helpers
 const isHumanTurn = () => state.turn === HUMAN && (state.stage === 'draw' || state.stage === 'play');
+const playing = () => isHumanTurn() && state.stage === 'play';
+const drawing = () => isHumanTurn() && state.stage === 'draw';
 const me = () => state.players[HUMAN];
 const nameOf = (i) => state.players[i].name;
 const profile = (p) => STRATEGIES[p.ai] || null;
 const compsOf = (p) => (p.phase > 10 ? [] : R.phase(p.phase).comps);
-const compLabel = (c) => c.type === 'set' ? `Set of ${c.n}` : c.type === 'run' ? `Run of ${c.n}` : `${c.n} of one colour`;
+const myComps = () => compsOf(me());
 const groupsOf = (i) => state.table.filter(g => g.owner === i);
 
 function sortedHand(ids) {
@@ -107,68 +115,88 @@ function fanEl(n) {
 
 const selectedCard = () => (selected.size === 1 ? R.card([...selected][0]) : null);
 
-// ---------------------------------------------------------------- staging (your phase slots)
+// ---------------------------------------------------------------- staging (your phase slots before laying down)
 const stagedIds = () => staged.flat();
 const stagedSet = () => new Set(stagedIds());
+const isRunSlot = (k) => myComps()[k]?.type === 'run';
 
 /** Keep the slot arrays in step with the current phase and hand. */
 function syncStaged() {
   const p = me();
   const comps = compsOf(p);
-  if (p.laidDown || !comps.length) { staged = []; return; }
+  if (p.laidDown || !comps.length) { staged = []; wildPos = []; picked = null; return; }
   const inHand = new Set(p.hand);
   staged = comps.map((_, k) => (staged[k] || []).filter(id => inHand.has(id)));
+  wildPos = comps.map((_, k) => {
+    const o = wildPos[k] || {}, keep = {};
+    for (const id of staged[k]) if (o[id] != null && R.isWild(R.card(id))) keep[id] = Number(o[id]);
+    return keep;
+  });
+  if (picked && !(staged[picked.slot] || []).includes(picked.id)) picked = null;
 }
 
-/** Do the cards in one slot form a valid group for that component (display only; the rules decide at lay-down)? */
-function slotComplete(comp, ids) {
-  const cs = R.cards(ids);
-  if (cs.length < comp.n || cs.some(R.isSkip) || !cs.some(R.isNum)) return false;
-  const nums = cs.filter(R.isNum);
-  if (comp.type === 'set') return nums.every(c => c.num === nums[0].num);
-  if (comp.type === 'color') return nums.every(c => c.color === nums[0].color);
-  const vals = [...new Set(nums.map(c => c.num))].sort((a, b) => a - b);
-  if (vals.length !== nums.length) return false;
-  const span = vals[vals.length - 1] - vals[0] + 1;
-  const wilds = cs.length - nums.length;
-  return span - nums.length <= wilds && cs.length <= 12;   // wilds fill the gaps; the rest extend the ends
+/** How your slot k is shown: card positions, validity, what is still needed (see rules.js:layoutGroup). */
+function layoutOf(k) {
+  return R.layoutGroup(myComps()[k], R.cards(staged[k] || []), { wildPos: wildPos[k] || {}, picked: picked && picked.slot === k ? picked.id : null });
 }
+const layouts = () => myComps().map((_, k) => layoutOf(k));
 
-function stageCards(slot, ids) {
+/** Set cards aside in slot k. `value`: the run position a wild was dropped on (null = let the rules place it). */
+function stageCards(k, ids, value = null) {
   syncStaged();
-  if (slot < 0 || slot >= staged.length) return;
-  const set = new Set(ids);
-  staged = staged.map(a => a.filter(id => !set.has(id)));
-  staged[slot].push(...ids);
+  if (k < 0 || k >= staged.length) return;
+  const moving = new Set(ids);
+  staged = staged.map(a => a.filter(id => !moving.has(id)));
+  wildPos = wildPos.map(o => { const c = { ...o }; for (const id of ids) delete c[id]; return c; });
+  staged[k].push(...ids);
+  if (isRunSlot(k)) {
+    // a natural landing on a pinned wild's value unpins it (it then floats like a newly added wild)
+    for (const id of ids) { const c = R.card(id); if (R.isNum(c)) for (const [w, v] of Object.entries(wildPos[k])) if (v === c.num) delete wildPos[k][w]; }
+    const w = ids.find(id => R.isWild(R.card(id)));
+    if (value != null && w != null) wildPos[k][w] = Number(value);
+  }
   for (const id of ids) selected.delete(id);
+  picked = null;
   afterStageChange();
 }
 
+/** Return cards from your slots to your hand. */
 function unstage(ids) {
-  const set = new Set(ids);
-  staged = staged.map(a => a.filter(id => !set.has(id)));
+  const moving = new Set(ids);
+  staged = staged.map(a => a.filter(id => !moving.has(id)));
+  picked = null;
+  afterStageChange();
+}
+
+/** Move a wild of run slot k to the empty position standing for `value`. The other wilds stay where they are. */
+function placeWild(k, id, value) {
+  const pins = { ...(wildPos[k] || {}) };
+  for (const q of layoutOf(k).positions) if (q.card && R.isWild(q.card) && q.card.id !== id && q.value != null) pins[q.card.id] = q.value;
+  pins[id] = Number(value);
+  wildPos[k] = pins;
+  picked = null;
   afterStageChange();
 }
 
 function afterStageChange() {
-  renderMe(); renderTargets(); renderActions();
+  renderMe(); renderTargets(); renderActions(); fitCards();
   persistUi();
   maybePromptLayDown();
 }
 
-/** When the cards in your slots complete the phase during your turn, offer to lay them down (once per arrangement). */
+/** When your slots hold a complete phase during your turn, offer to lay them down (once per turn). */
 async function maybePromptLayDown() {
   if (!settings.get('promptLayDown')) return;
   const p = me();
-  if (!isHumanTurn() || state.stage !== 'play' || p.laidDown || p.phase > 10) return;
+  if (!playing() || p.laidDown || p.phase > 10) return;
   const ids = stagedIds();
-  if (!ids.length || !R.canLayDown(R.cards(ids), p.phase, state.opts)) return;
+  if (!ids.length || !layouts().every(l => l.valid)) return;
   if (!state.opts.goOutByHit && ids.length === p.hand.length) return;
-  const sig = `${state.hand}:${p.hand.length}:${[...ids].sort((a, b) => a - b).join(',')}`;
+  const sig = `${state.hand}:${humanTurnNo}`;
   if (layPromptedFor === sig) return;
   layPromptedFor = sig;
   const ok = await confirm(`The cards in your slots complete phase ${p.phase} (${R.phase(p.phase).label}). Lay them down now?`, { ok: 'Lay down', cancel: 'Not yet', title: 'Phase complete' });
-  if (ok && isHumanTurn() && state.stage === 'play') layDownIds(ids);
+  if (ok && playing() && !me().laidDown) layDownSlots();
 }
 
 // ---------------------------------------------------------------- rendering
@@ -183,15 +211,35 @@ function render() {
   fitCards();
 }
 
-/** Phase slot: the laid-down group if there is one, otherwise empty (or, for you, the cards you set aside). */
-function slotEl(comp, k, { group = null, cards = [], owner = null } = {}) {
-  const cls = group ? '.filled' : cards.length ? '' : '.empty';
-  const body = group ? groupCards(group, '.small') : cards.map(id => cardEl(R.card(id), selected.has(id) ? '.sel' : ''));
+/** An empty position of a group you are assembling: the value it stands for, dashed. */
+function posEl(p, layout) {
+  const text = layout.type === 'color' || p.value == null ? (p.ext ? '+' : '?') : String(p.value);
+  const cls = (p.need ? '.need' : '') + (p.ext ? '.ext' : '') + (layout.type === 'color' && p.value ? `.k-${p.value}` : '');
+  const el = h('div.card.pos' + cls, {}, h('span.k', { text }), h('span.n', { text }), h('span.k.r', { text }));
+  if (layout.type === 'run' && p.value != null) el.dataset.value = String(p.value);
+  return el;
+}
+
+/** A card you have set aside; wilds in runs show the value they stand for. */
+function stagedCardEl(p, layout) {
+  const el = cardEl(p.card, picked && picked.id === p.card.id ? '.picked' : '');
+  if (layout.type === 'run' && R.isWild(p.card) && p.value != null) el.append(h('span.as', { text: String(p.value) }));
+  return el;
+}
+
+/** Phase slot: the laid-down group if there is one; for you before laying down, the positions of the group you are assembling. */
+function slotEl(comp, k, { group = null, layout = null, owner = null } = {}) {
+  let body = [], cls = '.empty';
+  if (group) { body = groupCards(group, '.small'); cls = '.filled'; }
+  else if (layout) {
+    body = layout.positions.map(p => p.card ? stagedCardEl(p, layout) : posEl(p, layout));
+    cls = (layout.valid ? '.complete' : '') + (layout.positions.some(p => p.card) ? '' : '.empty');
+  }
   const data = { slot: k, owner };
   if (group) data.group = group.id;
-  return h('div.slot' + cls, { data },
+  return h('div.slot' + cls, { data, style: { '--n': String(Math.max(1, body.length)) } },
     h('div.slot-cards', { style: { '--n': String(Math.max(1, body.length)) } }, body),
-    h('div.slot-label', { text: compLabel(comp) }));
+    h('div.slot-label', { text: R.compLabel(comp) }));
 }
 
 function renderOpponents() {
@@ -222,20 +270,19 @@ function renderOpponents() {
 }
 
 function renderPiles() {
-  const drawing = isHumanTurn() && state.stage === 'draw';
   clear(deckEl);
-  deckEl.classList.toggle('ready', drawing);
+  deckEl.classList.toggle('ready', drawing());
   deckEl.classList.toggle('empty', !state.deck.length);
-  deckEl.disabled = !drawing;
+  deckEl.setAttribute('aria-disabled', String(!drawing()));
   if (state.deck.length) deckEl.append(h('div.card.back'), h('span.count', { text: String(state.deck.length) }));
   deckEl.append(h('span.label', { text: 'Deck' }));
 
   clear(discardEl);
   const top = G.discardTop(state);
-  const takeable = drawing && top && !R.isSkip(top);
+  const takeable = drawing() && top && !R.isSkip(top);
   discardEl.classList.toggle('ready', !!takeable);
   discardEl.classList.toggle('empty', !top);
-  discardEl.disabled = !takeable;
+  discardEl.setAttribute('aria-disabled', String(!takeable && !playing()));
   if (top) discardEl.append(cardEl(top));
   discardEl.append(h('span.label', { text: 'Discard' }));
 
@@ -244,14 +291,21 @@ function renderPiles() {
   lines.forEach((l, i) => logEl.append(h('div' + (i === lines.length - 1 ? '.latest' : ''), { text: l })));
 }
 
-/** Highlight the groups the selected card could be hit onto. */
+/** Light up every destination the current selection can go to. */
 function renderTargets() {
-  const sel = selectedCard();
-  const canTarget = isHumanTurn() && state.stage === 'play' && me().laidDown && sel;
-  for (const el of main.querySelectorAll('.slot[data-group]')) {
-    const g = G.groupById(state, Number(el.dataset.group));
-    el.classList.toggle('target', !!(canTarget && g && R.canHit(g, sel)));
+  for (const el of main.querySelectorAll('.target')) el.classList.remove('target');
+  const p = selectionPayload();
+  if (!p) return;
+  const allow = (t) => whyNot(p, t) == null;
+  const hints = !!settings.get('slotHints');
+  if (hints) for (const el of main.querySelectorAll('.slot[data-group]')) el.classList.toggle('target', allow({ kind: 'group', id: Number(el.dataset.group) }));
+  for (const el of stageEl.querySelectorAll('.slot:not([data-group])')) {
+    const k = Number(el.dataset.slot);
+    if (p.from === 'hand') { if (hints) el.classList.toggle('target', allow({ kind: 'slot', k })); }
+    else for (const pos of el.querySelectorAll('.card.pos[data-value]')) pos.classList.toggle('target', allow({ kind: 'slot', k, value: Number(pos.dataset.value) }));
   }
+  discardEl.classList.toggle('target', allow({ kind: 'discard' }));
+  handWrap.classList.toggle('target', allow({ kind: 'hand' }));
 }
 
 function renderMe() {
@@ -267,15 +321,12 @@ function renderMe() {
     if (d.need === 0) { hintEl.textContent = 'Complete — lay it down!'; hintEl.classList.add('ok'); }
     else hintEl.textContent = `${d.need} card${d.need === 1 ? '' : 's'} away`;
   }
-  // phase slots: laid-down groups, or the cards you have set aside
+  // phase slots: laid-down groups, or the groups you are assembling
   clear(stageEl);
   const comps = compsOf(p);
   const groups = groupsOf(HUMAN);
-  comps.forEach((c, k) => {
-    const el = slotEl(c, k, p.laidDown ? { group: groups[k] || null, owner: HUMAN } : { cards: staged[k] || [], owner: HUMAN });
-    if (!p.laidDown && slotComplete(c, staged[k] || [])) el.classList.add('complete');
-    stageEl.append(el);
-  });
+  const lays = p.laidDown ? null : layouts();
+  comps.forEach((c, k) => stageEl.append(slotEl(c, k, lays ? { layout: lays[k], owner: HUMAN } : { group: groups[k] || null, owner: HUMAN })));
   // hand: everything not set aside
   clear(handEl);
   const inSlots = stagedSet();
@@ -305,11 +356,12 @@ function renderActions() {
   }
   const n = selected.size;
   if (!p.laidDown && p.phase <= 10) {
-    const ready = stagedIds().length > 0 && !!R.canLayDown(R.cards([...stagedIds(), ...selected]), p.phase, state.opts);
-    actionsEl.append(h('button.btn#btn-lay' + (ready ? '.btn-primary' : ''), { text: 'Lay down', disabled: n === 0 && !stagedIds().length, onClick: doLayDown }));
+    const any = stagedIds().length > 0;
+    const ready = any && layouts().every(l => l.valid);
+    actionsEl.append(h('button.btn#btn-lay' + (ready ? '.btn-primary' : ''), { text: 'Lay down', disabled: !any, onClick: doLayDown }));
   }
   if (p.laidDown) actionsEl.append(h('button.btn#btn-hit', { text: 'Hit', disabled: n !== 1, onClick: doHitPrompt }));
-  actionsEl.append(h('button.btn' + (p.laidDown || n === 1 ? '.btn-primary' : '') + '#btn-discard', { text: 'Discard', disabled: n !== 1, onClick: doDiscard }));
+  actionsEl.append(h('button.btn' + (p.laidDown || n === 1 ? '.btn-primary' : '') + '#btn-discard', { text: 'Discard', disabled: n !== 1, onClick: () => { const c = selectedCard(); if (c) doDiscard(c.id); else toast('Select exactly one card to discard'); } }));
 }
 
 /** Size the cards in your slots and hand so both rows fit the space left by the other rows. */
@@ -321,6 +373,16 @@ function fitCards() {
   const avail = main.clientHeight - fixed - chrome;
   const w = Math.max(30, Math.min(max, Math.floor(avail / 2.8)));
   main.style.setProperty('--cw', w + 'px');
+  // your slots (widths ∝ positions shown) shrink their cards only as far as needed to keep ≥ 55% of every card visible
+  const counts = [...stageEl.querySelectorAll('.slot .slot-cards')].map(el => el.childElementCount || 1);
+  let sw = w;
+  if (counts.length) {
+    const total = counts.reduce((a, b) => a + b, 0);
+    const width = stageEl.clientWidth - 8 * (counts.length - 1);
+    for (const n of counts) sw = Math.min(sw, Math.floor((width * n / total - 12) / (1 + 0.55 * (n - 1))));
+    sw = Math.max(30, sw);
+  }
+  main.style.setProperty('--sw', sw + 'px');
 }
 
 // ---------------------------------------------------------------- game flow
@@ -337,8 +399,8 @@ function startNewGame(seed = randomSeed()) {
   }
   aiRun++; aiBusy = false;
   selected.clear();
-  staged = [];
-  endShownFor = null; layPromptedFor = null;
+  staged = []; wildPos = []; picked = null;
+  endShownFor = null; layPromptedFor = null; humanTurnNo = 0;
   state = G.newGame({ seed, players, opts: rulesOpts() });
   afterAction();
 }
@@ -357,12 +419,86 @@ function gameInProgress() {
   return state.stage !== 'gameEnd' && (state.hand > 1 || state.table.length > 0 || state.players.some(p => p.hand.length !== 10) || state.stage === 'play');
 }
 
+// ---------------------------------------------------------------- moves: one model for taps and drags
+// payload: what is being moved — { from: 'hand' | 'slot' | 'deck' | 'discard', ids: [cardId], slot?: k }
+// target:  where it goes    — { kind: 'slot', k, value? } | { kind: 'hand' } | { kind: 'discard' } | { kind: 'group', id } | { kind: 'deck' }
+// A target's `value` is the run position (see layoutGroup) that was tapped / dropped on; it only matters for wilds.
+
+/** The current selection as a payload: a picked wild in one of your slots, or the selected hand cards. */
+function selectionPayload() {
+  if (picked) return { from: 'slot', ids: [picked.id], slot: picked.slot };
+  return selected.size ? { from: 'hand', ids: [...selected] } : null;
+}
+
+/** Why the move can't happen: null = it can; '' = doesn't apply (stay silent); otherwise a message for the player. */
+function whyNot(p, t) {
+  if (p.from === 'deck') return drawing() && (t.kind === 'hand' || t.kind === 'slot') ? null : '';
+  if (p.from === 'discard') {
+    if (!drawing() || !(t.kind === 'hand' || t.kind === 'slot')) return '';
+    return R.isSkip(R.card(p.ids[0])) ? 'A Skip can\'t be taken from the discard pile' : null;
+  }
+  const cs = R.cards(p.ids);
+  switch (t.kind) {
+    case 'hand': return p.from === 'slot' ? null : '';
+    case 'discard':
+      if (!playing() || p.from !== 'hand') return '';
+      return cs.length === 1 ? null : 'Discard one card at a time';
+    case 'group': {
+      if (!playing() || p.from !== 'hand') return '';
+      if (!me().laidDown) return 'Lay down your phase first, then you can hit';
+      if (cs.length !== 1) return 'Select exactly one card to hit with';
+      const g = G.groupById(state, t.id);
+      return g && R.canHit(g, cs[0]) ? null : `${R.cardName(cs[0])} doesn't fit on that group`;
+    }
+    case 'slot': {
+      if (me().laidDown || t.k >= staged.length) return '';
+      if (p.from === 'slot' && p.slot === t.k) {
+        // a wild moving to an empty position of its own run
+        if (t.value == null || cs.length !== 1 || !R.isWild(cs[0]) || !isRunSlot(t.k)) return '';
+        return layoutOf(t.k).positions.some(q => !q.card && q.value === t.value) ? null : '';
+      }
+      const why = R.whyNotFitAll(myComps()[t.k], R.cards(staged[t.k]), cs);
+      return why ? `${cs.length === 1 ? R.cardName(cs[0]) : 'Those cards'} can't go there: ${why}` : null;
+    }
+    default: return '';
+  }
+}
+
+/** Carry out a move if whyNot allows it (toasting the reason otherwise). Returns whether something happened. */
+function perform(p, t) {
+  const why = whyNot(p, t);
+  if (why != null) { if (why) toast(why, 2200); return false; }
+  if (p.from === 'deck') { doDraw('deck'); return true; }
+  if (p.from === 'discard') {
+    const id = p.ids[0];
+    doDraw('discard');
+    if (t.kind === 'slot' && !me().laidDown && me().hand.includes(id) && R.whyNotFitAll(myComps()[t.k], R.cards(staged[t.k] || []), [R.card(id)]) == null) stageCards(t.k, [id], t.value);
+    return true;
+  }
+  switch (t.kind) {
+    case 'hand': unstage(p.ids); break;
+    case 'discard': doDiscard(p.ids[0]); break;
+    case 'group': doHit(p.ids[0], t.id); break;
+    case 'slot': if (p.from === 'slot' && p.slot === t.k) placeWild(t.k, p.ids[0], t.value); else stageCards(t.k, p.ids, t.value); break;
+  }
+  return true;
+}
+
+/** Tap on a destination: move the selection there, or explain what to select. */
+function tapTarget(t) {
+  const p = selectionPayload();
+  if (p) { perform(p, t); return; }
+  if (t.kind === 'group') { if (playing()) toast(me().laidDown ? 'Select a card in your hand, then tap a group to hit it' : 'Lay down your phase first, then you can hit'); }
+  else if (t.kind === 'slot' && !me().laidDown) toast('Select cards in your hand, then tap a slot to set them aside');
+}
+
 // ---------------------------------------------------------------- human actions
 function doDraw(from) {
   if (!isHumanTurn()) return;
   const before = me().hand.length;
   const r = G.draw(state, from);
   if (!r.ok) { toast(r.reason); return; }
+  humanTurnNo++;
   afterAction();
   if (me().hand.length > before) {
     const newId = me().hand[me().hand.length - 1];
@@ -370,19 +506,22 @@ function doDraw(from) {
   }
 }
 
-/** Lay down the cards in your slots plus whatever is selected in your hand. */
+/** Lay down the cards in your slots, arranged exactly as shown. */
 function doLayDown() {
-  if (!isHumanTurn()) return;
-  const ids = [...stagedIds(), ...selected];
-  if (!ids.length) { toast('Put the cards of your phase in the slots (or select them) first'); return; }
-  layDownIds(ids);
+  if (!playing()) return;
+  if (!stagedIds().length) { toast('Put the cards of your phase in the slots above first'); return; }
+  const comps = myComps(), lays = layouts();
+  const bad = lays.findIndex(l => !l.valid);
+  if (bad >= 0) { toast(`${R.compLabel(comps[bad])} ${lays[bad].reason}`, 2600); return; }
+  layDownSlots();
 }
 
-function layDownIds(ids) {
-  const r = G.layDown(state, ids);
+function layDownSlots() {
+  const lists = layouts().map(l => l.positions.filter(p => p.card).map(p => p.card.id));
+  const r = G.layDownGroups(state, lists);
   if (!r.ok) { toast(r.reason, 2600); return; }
-  selected.clear();
-  staged = [];
+  selected.clear(); picked = null;
+  staged = []; wildPos = [];
   afterAction();
   if (state.stage === 'play') toast('Laid down! Hit cards onto any group, then discard.');
 }
@@ -392,16 +531,16 @@ function doHitPrompt() {
   if (!c) { toast('Select exactly one card to hit with'); return; }
   const targets = state.table.filter(g => R.canHit(g, c));
   if (!targets.length) { toast(`${R.cardName(c)} doesn't fit on any group`); return; }
-  if (targets.length === 1) { doHit(targets[0].id); return; }
+  if (targets.length === 1) { doHit(c.id, targets[0].id); return; }
   toast('Tap the highlighted group to hit');
 }
 
-async function doHit(groupId) {
-  if (!isHumanTurn() || state.stage !== 'play') return;
-  const c = selectedCard();
-  if (!c) { toast('Select one card, then tap a group to hit'); return; }
+async function doHit(id, groupId) {
+  if (!playing()) return;
   if (!me().laidDown) { toast('Lay down your phase before hitting'); return; }
+  const c = R.card(id);
   const g = G.groupById(state, groupId);
+  if (!g) return;
   const options = R.hitOptions(g, c);
   if (!options.length) { toast(`${R.cardName(c)} doesn't fit on that group`); return; }
   let end = options[0];
@@ -411,30 +550,29 @@ async function doHit(groupId) {
       body: `Play the Wild as a ${g.lo - 1} (low end) or as a ${g.hi + 1} (high end)?`,
       buttons: [{ label: `Low (${g.lo - 1})`, value: 'low' }, { label: `High (${g.hi + 1})`, value: 'high', primary: true }],
     });
-    if (!end) return;
+    if (!end || !playing()) return;
   }
-  const r = G.hit(state, c.id, groupId, end);
+  const r = G.hit(state, id, groupId, end);
   if (!r.ok) { toast(r.reason); return; }
   selected.clear();
   afterAction();
 }
 
-async function doDiscard() {
-  if (!isHumanTurn() || state.stage !== 'play') return;
-  const c = selectedCard();
-  if (!c) { toast('Select exactly one card to discard'); return; }
+async function doDiscard(id) {
+  if (!playing()) return;
+  const c = R.card(id);
   let target = null;
   if (R.isSkip(c)) {
     const eligible = G.eligibleSkipTargets(state);
     if (eligible.length === 1) target = eligible[0];
     else if (eligible.length > 1) {
       target = await chooseSkipTarget(eligible);
-      if (target == null) return;
+      if (target == null || !playing()) return;
     }
   }
-  const r = G.discard(state, c.id, target);
+  const r = G.discard(state, id, target);
   if (!r.ok) { toast(r.reason); return; }
-  selected.clear();
+  selected.clear(); picked = null;
   afterAction();
 }
 
@@ -453,100 +591,164 @@ function chooseSkipTarget(eligible) {
   });
 }
 
+function refreshSelection() { renderMe(); renderTargets(); renderActions(); }
 function toggleSelect(id) {
+  picked = null;
   if (selected.has(id)) selected.delete(id); else selected.add(id);
-  renderMe();
-  renderTargets();
-  renderActions();
+  refreshSelection();
 }
+function clearSelection() { selected.clear(); picked = null; refreshSelection(); }
 
-/** Tap on a phase slot (yours or an opponent's): hit a laid-down group, or move selected cards into your slot. */
-function onSlotTap(el) {
-  if (el.dataset.group) {
-    if (!isHumanTurn() || state.stage !== 'play') return;
-    if (!me().laidDown) { toast('Lay down your phase first, then you can hit'); return; }
-    if (selected.size !== 1) { toast('Select exactly one card to hit with'); return; }
-    doHit(Number(el.dataset.group));
-    return;
-  }
-  if (Number(el.dataset.owner) !== HUMAN) return;
-  if (!selected.size) { toast('Select cards in your hand, then tap a slot to set them aside'); return; }
-  stageCards(Number(el.dataset.slot), [...selected]);
-}
-
-// ---------------------------------------------------------------- drag: hand ⇄ slots
-let drag = null;   // { ids, ghost }
-function startDrag(i, ids) {
-  const c = R.card(ids[0]);
-  const ghost = cardEl(c, '.ghost');
+// ---------------------------------------------------------------- drag: hand / slots / piles → slots / hand / discard / groups
+let drag = null;   // { payload, ghost, over }
+function startDrag(i, payload) {
+  const ghost = payload.from === 'deck' ? h('div.card.back.ghost') : cardEl(R.card(payload.ids[0]), '.ghost');
   ghost.style.setProperty('--w', main.style.getPropertyValue('--cw') || '56px');
-  if (ids.length > 1) ghost.append(h('span.cnt', { text: String(ids.length) }));
+  if (payload.ids.length > 1) ghost.append(h('span.cnt', { text: String(payload.ids.length) }));
   document.body.append(ghost);
-  drag = { ids, ghost };
+  drag = { payload, ghost, over: null };
   moveDrag(i);
   return true;
 }
+
+/** The drop target under a point for this payload, if any. */
+function targetAt(x, y, payload) {
+  const over = elementAt(x, y, [drag?.ghost]);
+  if (!over || !over.closest) return null;
+  const slot = over.closest('.slot');
+  if (slot) {
+    if (slot.dataset.group) return { kind: 'group', id: Number(slot.dataset.group) };
+    if (Number(slot.dataset.owner) !== HUMAN) return null;
+    const pos = over.closest('.card.pos');
+    const single = payload.ids.length === 1 && R.card(payload.ids[0]);
+    const value = pos?.dataset.value != null && single && R.isWild(single) ? Number(pos.dataset.value) : null;   // only wilds land on a chosen position
+    return { kind: 'slot', k: Number(slot.dataset.slot), value };
+  }
+  if (over.closest('#discard')) return { kind: 'discard' };
+  if (over.closest('#deck')) return { kind: 'deck' };
+  if (over.closest('.hand-wrap, .me')) return { kind: 'hand' };
+  return null;
+}
+
+/** The element that lights up while dragging over a target. */
+function targetEl(t) {
+  switch (t.kind) {
+    case 'slot': {
+      const slot = stageEl.querySelector(`.slot[data-slot="${t.k}"]:not([data-group])`);
+      return (t.value != null && slot?.querySelector(`.card.pos[data-value="${t.value}"]`)) || slot;
+    }
+    case 'group': return main.querySelector(`.slot[data-group="${t.id}"]`);
+    case 'discard': return discardEl;
+    case 'deck': return deckEl;
+    case 'hand': return handWrap;
+    default: return null;
+  }
+}
+
 function moveDrag(i) {
   if (!drag) return;
   drag.ghost.style.left = i.clientX + 'px';
   drag.ghost.style.top = i.clientY + 'px';
-  const over = elementAt(i.clientX, i.clientY, [drag.ghost]);
-  const slot = over?.closest?.('.stage .slot:not([data-group])');
-  for (const el of stageEl.querySelectorAll('.slot.dropping')) if (el !== slot) el.classList.remove('dropping');
-  slot?.classList.add('dropping');
-  handEl.classList.toggle('dropping', !slot && !!over?.closest?.('.hand-wrap'));
-}
-function endDrag(i, cancelled) {
-  if (!drag) return;
-  const { ids, ghost } = drag;
-  drag = null;
-  ghost.remove();
-  for (const el of stageEl.querySelectorAll('.slot.dropping')) el.classList.remove('dropping');
-  handEl.classList.remove('dropping');
-  if (cancelled) return;
-  const over = elementAt(i.clientX, i.clientY);
-  const slot = over?.closest?.('.stage .slot:not([data-group])');
-  if (slot) stageCards(Number(slot.dataset.slot), ids);
-  else if (over?.closest?.('.hand-wrap')) unstage(ids);
+  const t = targetAt(i.clientX, i.clientY, drag.payload);
+  const el = t && whyNot(drag.payload, t) == null ? targetEl(t) : null;
+  if (el !== drag.over) { drag.over?.classList.remove('dropping'); el?.classList.add('dropping'); drag.over = el; }
 }
 
-onPress(handEl, {
-  onTap(i) { const el = i.downTarget?.closest?.('.card'); if (el && el.dataset.id != null) toggleSelect(Number(el.dataset.id)); },
+function endDrag(i, cancelled) {
+  if (!drag) return;
+  const { payload, ghost, over } = drag;
+  drag = null;
+  ghost.remove();
+  over?.classList.remove('dropping');
+  if (cancelled) return;
+  const t = targetAt(i.clientX, i.clientY, payload);
+  if (t) perform(payload, t);
+}
+
+const dragHandlers = { onDragMove(i) { moveDrag(i); }, onDragEnd(i, dx, dy, cancelled) { endDrag(i, cancelled); } };
+
+// your hand: tap to select; with a wild picked in a slot, tapping the hand returns it
+onPress(handWrap, {
+  ...dragHandlers,
+  onTap(i) {
+    if (picked) { unstage([picked.id]); return; }
+    const el = i.downTarget?.closest?.('.card');
+    if (el && el.dataset.id != null) toggleSelect(Number(el.dataset.id));
+    else if (selected.size) clearSelection();
+  },
   onDragStart(i) {
     const el = i.downTarget?.closest?.('.card');
-    if (!el || el.dataset.id == null || me().laidDown) return false;
+    if (!el || el.dataset.id == null) return false;
+    if (me().laidDown && !playing()) return false;   // nowhere to drag to
     const id = Number(el.dataset.id);
-    return startDrag(i, selected.has(id) ? [...selected] : [id]);
+    return startDrag(i, { from: 'hand', ids: selected.has(id) ? [...selected] : [id] });
   },
-  onDragMove(i) { moveDrag(i); },
-  onDragEnd(i, dx, dy, cancelled) { endDrag(i, cancelled); },
 });
+
+// your slots: tap a card to return it (a wild in a run: pick it, then tap the position it should move to); tap a slot to fill it
 onPress(stageEl, {
+  ...dragHandlers,
   onTap(i) {
-    const card = i.downTarget?.closest?.('.card');
     const slot = i.downTarget?.closest?.('.slot');
     if (!slot) return;
-    if (card && card.dataset.id != null && !slot.dataset.group) { unstage([Number(card.dataset.id)]); return; }
-    onSlotTap(slot);
+    if (slot.dataset.group) { tapTarget({ kind: 'group', id: Number(slot.dataset.group) }); return; }
+    const k = Number(slot.dataset.slot);
+    const card = i.downTarget?.closest?.('.card[data-id]');
+    const pos = i.downTarget?.closest?.('.card.pos');
+    const value = pos?.dataset.value != null ? Number(pos.dataset.value) : null;
+    const id = card ? Number(card.dataset.id) : null;
+    if (picked) {
+      if (picked.slot === k && value != null) { perform(selectionPayload(), { kind: 'slot', k, value }); return; }
+      const same = picked.id === id;
+      picked = null;
+      if (same || id == null) { refreshSelection(); return; }
+      // another card was tapped: treat it as a fresh tap
+    }
+    if (selected.size) { tapTarget({ kind: 'slot', k, value }); return; }
+    if (id == null) { tapTarget({ kind: 'slot', k }); return; }
+    if (isRunSlot(k) && R.isWild(R.card(id))) { picked = { slot: k, id }; refreshSelection(); }
+    else unstage([id]);
   },
   onDragStart(i) {
-    const card = i.downTarget?.closest?.('.card');
+    const card = i.downTarget?.closest?.('.card[data-id]');
     const slot = i.downTarget?.closest?.('.slot');
-    if (!card || card.dataset.id == null || !slot || slot.dataset.group) return false;
-    return startDrag(i, [Number(card.dataset.id)]);
+    if (!card || !slot || slot.dataset.group) return false;
+    return startDrag(i, { from: 'slot', ids: [Number(card.dataset.id)], slot: Number(slot.dataset.slot) });
   },
-  onDragMove(i) { moveDrag(i); },
-  onDragEnd(i, dx, dy, cancelled) { endDrag(i, cancelled); },
 });
+
+// opponents' groups: hit targets
 onPress(oppsEl, {
-  onTap(i) { const slot = i.downTarget?.closest?.('.slot'); if (slot) onSlotTap(slot); },
+  onTap(i) { const slot = i.downTarget?.closest?.('.slot'); if (slot?.dataset.group) tapTarget({ kind: 'group', id: Number(slot.dataset.group) }); },
   preventDefault: false,
 });
-deckEl.addEventListener('click', () => doDraw('deck'));
-discardEl.addEventListener('click', () => doDraw('discard'));
-logEl.addEventListener('click', openLog);
+
+// piles: tap or drag the deck / discard to draw; tap the discard with a card selected to discard it
+onPress(pilesEl, {
+  ...dragHandlers,
+  onTap(i) {
+    const t = i.downTarget;
+    if (!t?.closest) return;
+    if (t.closest('#log')) { openLog(); return; }
+    if (t.closest('#deck')) { if (drawing()) doDraw('deck'); else if (playing()) toast('You already drew this turn'); return; }
+    if (t.closest('#discard')) {
+      if (drawing()) { doDraw('discard'); return; }
+      const p = selectionPayload();
+      if (p && p.from === 'hand') perform(p, { kind: 'discard' });
+      else if (playing() && !picked) toast('Select a card in your hand, then tap here to discard it');
+    }
+  },
+  onDragStart(i) {
+    const t = i.downTarget;
+    if (!t?.closest || !drawing()) return false;
+    if (t.closest('#deck')) return startDrag(i, { from: 'deck', ids: [] });
+    if (t.closest('#discard')) { const top = G.discardTop(state); return top && !R.isSkip(top) ? startDrag(i, { from: 'discard', ids: [top.id] }) : false; }
+    return false;
+  },
+});
+
 $('#btn-menu').addEventListener('click', showMenu);
-window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { selected.clear(); render(); } });
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape') clearSelection(); });
 window.addEventListener('resize', () => { if (state) fitCards(); });
 
 // ---------------------------------------------------------------- AI turns
@@ -629,7 +831,7 @@ async function showSummary() {
   }
   const v = await modal({ title: `Hand ${sum.hand} — ${nameOf(sum.outPlayer)} went out`, body: summaryTable(sum), dismissable: false,
     buttons: [{ label: 'Next hand', value: true, primary: true }] });
-  if (v && state.stage === 'handEnd') { G.nextHand(state); selected.clear(); staged = []; layPromptedFor = null; afterAction(); }
+  if (v && state.stage === 'handEnd') { G.nextHand(state); selected.clear(); staged = []; wildPos = []; picked = null; layPromptedFor = null; afterAction(); }
 }
 
 // ---------------------------------------------------------------- menu, settings, help, log
@@ -683,8 +885,9 @@ function showHelp() {
     title: 'How to play', wide: true,
     body: h('div.help', { style: { lineHeight: '1.5' } },
       h('p', {}, h('b', {}, 'Goal: '), 'complete phases 1–10 in order. A hand ends when someone has no cards left. Everyone who laid down their phase moves on; the rest repeat it. Cards left in hand count against you (1–9: 5, 10–12: 10, Skip: 15, Wild: 25). The game ends after a hand in which someone finished the final phase; lowest score among them wins.'),
-      h('p', {}, h('b', {}, 'Turn: '), 'draw from the deck or take the top discard (not a Skip) → optionally lay down your whole phase at once → once laid down, hit any card that fits onto any group on the table (select one card, tap the group) → discard one card.'),
-      h('p', {}, h('b', {}, 'Phase slots: '), 'the labelled slots above your hand show what your phase needs. At any time, drag cards there (or select them and tap a slot) to set them aside; tap or drag a card back to return it to your hand. A slot turns green when its cards form a valid group, and when the slots hold a complete phase on your turn you are asked whether to lay it down. ', h('b', {}, 'Lay down'), ' plays the cards in your slots plus any selected in your hand. Opponents\' slots fill in as they lay down.'),
+      h('p', {}, h('b', {}, 'Turn: '), 'draw from the deck or take the top discard (not a Skip) → optionally lay down your whole phase at once → once laid down, hit any card that fits onto any group on the table → discard one card.'),
+      h('p', {}, h('b', {}, 'Phase slots: '), 'the slots above your hand show what your phase needs, one dashed position per card. At any time, drag cards there from your hand (or select them and tap a slot); a card that doesn\'t belong in the group is refused. Runs arrange themselves by number — wilds fill the gaps lowest first and otherwise sit at the high end. Tap a wild in a run to pick it up, then tap any empty position (including beyond either end) to move it there, or tap your hand to take it back. Once a group is complete, an extra position opens at each end so you can add the cards you would otherwise hit afterwards. ', h('b', {}, 'Lay down'), ' plays the slots exactly as shown. Tap any other card in a slot to return it to your hand.'),
+      h('p', {}, h('b', {}, 'Destinations: '), 'when a card is selected, everywhere it can go lights up: your slots, the groups on the table it can be hit onto, and the discard pile — tap one, or drag the card there. The deck and discard pile can be dragged into your hand to draw.'),
       h('p', {}, h('b', {}, 'Groups: '), 'set = same number, any colours · run = consecutive numbers, no wrap · colour = all one colour. Wilds stand in for anything; every group needs at least one real card. Discarding a Skip makes a player of your choice lose their next turn.'),
       h('p', {}, h('b', {}, 'Hints: '), 'the line above your slots shows how many cards you are from completing your phase. Opponents each have a strategy badge: ', Object.values(STRATEGIES).map((s, i) => [i ? ', ' : '', h('b', { text: s.name })]), '. They all play well; the badges only change their priorities (points, defence, when to Skip whom).'),
     ),
@@ -695,16 +898,24 @@ function showHelp() {
 window.__rounds = {
   get game() { return state; },
   get staged() { return staged; },
+  get wildPos() { return wildPos; },
+  get picked() { return picked; },
+  get selected() { return [...selected]; },
+  layouts, whyNot, perform,
   rules: R, ai: AI, G, settings, STRATEGIES,
   actions: {
     draw: (from = 'deck') => { const r = G.draw(state, from); if (r.ok) afterAction(); return r; },
-    layDown: (ids) => { const r = G.layDown(state, ids); if (r.ok) { selected.clear(); staged = []; afterAction(); } return r; },
+    layDown: (ids) => { const r = G.layDown(state, ids); if (r.ok) { selected.clear(); staged = []; wildPos = []; picked = null; afterAction(); } return r; },
+    layDownSlots,
     hit: (id, groupId, end) => { const r = G.hit(state, id, groupId, end); if (r.ok) { selected.clear(); afterAction(); } return r; },
     discard: (id, target = null) => { const r = G.discard(state, id, target); if (r.ok) { selected.clear(); afterAction(); } return r; },
     nextHand: () => { const r = G.nextHand(state); if (r.ok) afterAction(); return r; },
     select: (id) => toggleSelect(id),
-    stage: (slot, ids) => stageCards(slot, ids),
+    clearSelection,
+    stage: (slot, ids, value = null) => stageCards(slot, ids, value),
     unstage: (ids) => unstage(ids),
+    pick: (slot, id) => { picked = { slot, id }; refreshSelection(); },
+    placeWild,
     newGame: (seed) => startNewGame(seed),
     showSummary, menu: showMenu,
   },

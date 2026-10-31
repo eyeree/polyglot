@@ -430,3 +430,141 @@ test('state survives a JSON round trip (persistence format)', () => {
   assert.ok(!G.isValidState({}));
   assert.ok(!G.isValidState(null));
 });
+
+// ---------------------------------------------------------------- staging: what fits, how a group is laid out, explicit lay-down
+const SET3 = { type: 'set', n: 3 }, RUN4 = { type: 'run', n: 4 }, RUN7 = { type: 'run', n: 7 }, COL7 = { type: 'color', n: 7 };
+const pos = (l) => l.positions.map(p => p.card ? R.shortName(p.card) + (l.type === 'run' && p.value != null && R.isWild(p.card) ? p.value : '') : p.need ? `_${p.value ?? ''}` : `+${p.value ?? ''}`);
+
+test('staging: which cards may join an uncommitted group', () => {
+  assert.equal(R.whyNotFit(SET3, [], N(5)), null);
+  assert.equal(R.whyNotFit(SET3, [N(5)], N(5, 'blue')), null);
+  assert.match(R.whyNotFit(SET3, [N(5)], N(7)), /set is 5s/);
+  assert.equal(R.whyNotFit(SET3, [W()], N(7)), null, 'wilds alone fix nothing');
+  assert.equal(R.whyNotFit(SET3, [N(5)], W()), null);
+  assert.match(R.whyNotFit(SET3, [N(5)], S()), /Skip/);
+  assert.equal(R.whyNotFit(COL7, [N(5)], N(9)), null, 'same colour');
+  assert.match(R.whyNotFit(COL7, [N(5)], N(9, 'blue')), /group is red/);
+  assert.equal(R.whyNotFit(RUN4, [N(5)], N(9, 'blue')), null, 'any colour, far apart is fine');
+  assert.match(R.whyNotFit(RUN4, [N(5)], N(5, 'blue')), /already in that run/);
+  assert.match(R.whyNotFitAll(RUN4, [N(5)], [N(6), N(6, 'blue')]), /6 is already/);
+  assert.equal(R.whyNotFitAll(RUN4, [N(5)], [N(6), W(), N(8)]), null);
+  const twelve = Array.from({ length: 12 }, (_, i) => N(i + 1));
+  assert.match(R.whyNotFit(RUN4, twelve, W()), /longer than 12/);
+  assert.equal(R.whyNotFit(RUN4, twelve.slice(0, 11), W()), null);
+});
+
+test('staging layout: sets show n positions, then one extension position once filled', () => {
+  let l = R.layoutGroup(SET3, []);
+  assert.deepEqual(pos(l), ['_', '_', '_']); assert.equal(l.valid, false); assert.equal(l.missing, 3);
+  l = R.layoutGroup(SET3, [N(5), W()]);
+  assert.deepEqual(pos(l), ['R5', 'W', '_5']); assert.equal(l.key, 5);
+  l = R.layoutGroup(SET3, [N(5), N(5, 'blue'), W()]);
+  assert.deepEqual(pos(l), ['R5', 'B5', 'W', '+5']); assert.ok(l.valid);
+  l = R.layoutGroup(SET3, [N(5), N(5, 'blue'), W(), N(5, 'green')]);
+  assert.deepEqual(pos(l), ['R5', 'B5', 'W', 'G5', '+5'], 'extras keep one open position');
+  l = R.layoutGroup(SET3, [W(), W(1), W(2)]);
+  assert.deepEqual(pos(l), ['W', 'W', 'W', '_']); assert.match(l.reason, /real card/);
+  l = R.layoutGroup(COL7, [N(1), N(3)]);
+  assert.equal(l.positions.length, 7); assert.equal(l.key, 'red'); assert.match(l.reason, /5 more/);
+});
+
+test('staging layout: runs place naturals by value, wilds fill gaps lowest first, free wilds go high', () => {
+  let l = R.layoutGroup(RUN4, [N(5)]);
+  assert.deepEqual(pos(l), ['R5', '_6', '_7', '_8']);
+  l = R.layoutGroup(RUN4, [N(5), N(3)]);
+  assert.deepEqual(pos(l), ['R3', '_4', 'R5', '_6'], 'gap shown, then grows at the high end');
+  l = R.layoutGroup(RUN4, [N(5), N(3), W()]);
+  assert.deepEqual(pos(l), ['R3', 'W4', 'R5', '_6'], 'a wild fills the gap first');
+  l = R.layoutGroup(RUN4, [N(5), N(6), N(7), W()]);
+  assert.deepEqual(pos(l), ['+4', 'R5', 'R6', 'R7', 'W8', '+9'], 'no gap: the wild goes to the high end, not the start');
+  assert.ok(l.valid); assert.equal(l.lo, 5); assert.equal(l.hi, 8);
+  l = R.layoutGroup(RUN4, [N(11), N(12)]);
+  assert.deepEqual(pos(l), ['_9', '_10', 'R11', 'R12'], 'needed positions go below once 12 is reached');
+  l = R.layoutGroup(RUN4, [N(10), N(11), N(12), W()]);
+  assert.deepEqual(pos(l), ['+8', 'W9', 'R10', 'R11', 'R12'], '12 forces the free wild low; no extension above 12');
+  l = R.layoutGroup(RUN4, [N(1), N(2), N(3), N(4)]);
+  assert.deepEqual(pos(l), ['R1', 'R2', 'R3', 'R4', '+5'], 'no extension below 1');
+  l = R.layoutGroup(RUN4, [N(3), N(5), N(7), W(), W(1)]);
+  assert.deepEqual(pos(l), ['+2', 'R3', 'W4', 'R5', 'W6', 'R7', '+8'], 'two gaps, two wilds → valid run of 5');
+  assert.ok(l.valid);
+  l = R.layoutGroup(RUN7, [N(3), N(5), N(7), W(), W(1)]);
+  assert.deepEqual(pos(l), ['R3', 'W4', 'R5', 'W6', 'R7', '_8', '_9']); assert.equal(l.missing, 2);
+  l = R.layoutGroup(RUN4, [W(), W(1)]);
+  assert.deepEqual(pos(l), ['W', 'W', '_', '_'], 'nothing anchors an all-wild run');
+  l = R.layoutGroup(RUN4, [W(), W(1), W(2), W(3)]);
+  assert.deepEqual(pos(l), ['W', 'W', 'W', 'W', '_']); assert.match(l.reason, /real card/);
+  l = R.layoutGroup(RUN4, [N(5), N(5, 'blue')]);
+  assert.match(l.reason, /two 5s/); assert.equal(l.positions.filter(p => p.card).length, 2, 'the duplicate is still shown');
+});
+
+test('staging layout: a wild pinned to a value stays there until a natural takes the spot', () => {
+  const w = W();
+  let l = R.layoutGroup(RUN4, [N(5), N(6), N(7), w], { wildPos: { [w.id]: 4 } });
+  assert.deepEqual(pos(l), ['+3', 'W4', 'R5', 'R6', 'R7', '+8'], 'moved to the low end');
+  l = R.layoutGroup(RUN4, [N(5), N(6), N(7), w, N(4)], { wildPos: { [w.id]: 4 } });
+  assert.deepEqual(pos(l), ['+3', 'R4', 'R5', 'R6', 'R7', 'W8', '+9'], 'a natural 4 displaces the wild, which floats to the high end');
+  l = R.layoutGroup(RUN7, [N(3), N(5), N(7), w], { wildPos: { [w.id]: 9 } });
+  assert.deepEqual(pos(l), ['R3', '_4', 'R5', '_6', 'R7', '_8', 'W9'], 'pinned beyond the naturals: the gaps stay open');
+  l = R.layoutGroup(RUN4, [N(5), N(6), w], { wildPos: { [w.id]: 4 } });
+  assert.deepEqual(pos(l), ['W4', 'R5', 'R6', '_7'], 'pinned low: the needed card is now a 7');
+  l = R.layoutGroup(RUN4, [N(5), N(6), w], { picked: w.id });
+  assert.deepEqual(pos(l), ['+4', 'R5', 'R6', 'W7', '_8', '+9'], 'while a wild is picked an incomplete run shows both ends');
+  l = R.layoutGroup(RUN4, [N(11), N(12), w], { picked: w.id });
+  assert.deepEqual(pos(l), ['+8', '_9', 'W10', 'R11', 'R12'], 'nothing above 12');
+  l = R.layoutGroup(RUN4, [w], { wildPos: { [w.id]: 4 } });
+  assert.deepEqual(pos(l), ['W4', '_5', '_6', '_7']); assert.match(l.reason, /real card/);
+  l = R.layoutGroup(RUN4, [w, W(1), W(2), W(3)], { wildPos: { [w.id]: 4 } });
+  assert.deepEqual(pos(l), ['W4', 'W5', 'W6', 'W7', '_8'], 'four wilds anchored by one still need a natural');
+});
+
+test('validateGroups: explicit arrangements are taken as given', () => {
+  const w = W();
+  let r = R.validateGroups([[N(5), N(6), N(7), w]], 2);
+  assert.ok(r.error, 'phase 2 has two components');
+  r = R.validateGroups([[N(9), N(9, 'blue'), N(9, 'green')], [N(5), N(6), N(7), w]], 2);
+  assert.ok(!r.error, r.error);
+  assert.equal(r.groups[1].lo, 5); assert.equal(r.groups[1].hi, 8, 'the wild stands for 8 because it was placed last');
+  r = R.validateGroups([[N(9), N(9, 'blue'), N(9, 'green')], [w, N(5), N(6), N(7)]], 2);
+  assert.equal(r.groups[1].lo, 4, 'wild first → it stands for 4');
+  assert.match(R.validateGroups([[N(9), N(9, 'blue'), N(9, 'green')], [N(5), N(7), N(6), w]], 2).error, /consecutive/);
+  assert.match(R.validateGroups([[N(9), N(9, 'blue'), N(9, 'green')], [N(5), N(6), w]], 2).error, /needs 4 cards/);
+  assert.match(R.validateGroups([[N(9), N(9, 'blue'), N(8)], [N(5), N(6), N(7), w]], 2).error, /same number/);
+  assert.match(R.validateGroups([[W(1), W(2), W(3)], [N(5), N(6), N(7), w]], 2).error, /real card/);
+  assert.match(R.validateGroups([[N(9), N(9, 'blue'), N(9, 'green')], [N(10), N(11), N(12), w]], 2).error, /past 12/);
+  assert.match(R.validateGroups([[N(9), N(9, 'blue'), N(9, 'green')], [w, N(1), N(2), N(3)]], 2).error, /past 1/);
+  assert.match(R.validateGroups([[N(9), N(9, 'blue'), N(9, 'green')], [N(5), N(6), N(7), S()]], 2).error, /Skip/);
+  assert.ok(!R.validateGroups([[N(5), N(5, 'blue'), N(5, 'green')], [N(5, 'yellow'), N(5, 'red', 1), N(5, 'blue', 1)]], 1).error);
+  assert.match(R.validateGroups([[N(5), N(5, 'blue'), N(5, 'green')], [N(5, 'yellow'), N(5, 'red', 1), N(5, 'blue', 1)]], 1, { allowSameNumberSets: false }).error, /share/);
+  r = R.validateGroups([[N(1), N(3), N(5), N(7), N(9), N(11), N(2)]], 8);
+  assert.ok(!r.error); assert.equal(r.groups[0].key, 'red');
+});
+
+test('layDownGroups keeps the wild where the player put it (the end of the run)', () => {
+  const s = twoPlayer(1);
+  s.turn = 0; s.stage = 'play'; s.players[0].skipped = false;
+  const w = W();
+  s.players[0].hand = [N(9).id, N(9, 'blue').id, N(9, 'green').id, N(5).id, N(6).id, N(7).id, w.id, N(1).id];
+  s.players[0].phase = 2;
+  const r = G.layDownGroups(s, [[N(9).id, N(9, 'blue').id, N(9, 'green').id], [N(5).id, N(6).id, N(7).id, w.id]]);
+  assert.ok(r.ok, r.reason);
+  const run = s.table.find(g => g.type === 'run');
+  assert.equal(run.lo, 5); assert.equal(run.hi, 8);
+  assert.deepEqual(run.cards, [N(5).id, N(6).id, N(7).id, w.id]);
+  assert.deepEqual(R.hitOptions(run, N(4)), ['low'], 'a 4 can now be hit below');
+  assert.deepEqual(s.players[0].hand, [N(1).id]);
+  // the old auto-arranged form would have put the wild first
+  const t = twoPlayer(1);
+  t.turn = 0; t.stage = 'play'; t.players[0].skipped = false; t.players[0].phase = 2;
+  t.players[0].hand = [N(9).id, N(9, 'blue').id, N(9, 'green').id, N(5).id, N(6).id, N(7).id, w.id, N(1).id];
+  assert.ok(G.layDown(t, [N(9).id, N(9, 'blue').id, N(9, 'green').id, N(5).id, N(6).id, N(7).id, w.id]).ok);
+  assert.equal(t.table.find(g => g.type === 'run').lo, 4);
+  // validation failures leave the state untouched
+  const u = twoPlayer(1);
+  u.turn = 0; u.stage = 'play'; u.players[0].skipped = false; u.players[0].phase = 2;
+  u.players[0].hand = [N(9).id, N(9, 'blue').id, N(9, 'green').id, N(5).id, N(6).id, N(8).id, w.id, N(1).id];
+  const bad = G.layDownGroups(u, [[N(9).id, N(9, 'blue').id, N(9, 'green').id], [N(5).id, N(6).id, N(8).id, w.id]]);
+  assert.equal(bad.ok, false); assert.match(bad.reason, /consecutive/);
+  assert.equal(u.table.length, 0); assert.equal(u.players[0].hand.length, 8);
+  assert.equal(G.layDownGroups(u, [[N(9).id], [N(5).id]]).ok, false);
+  assert.match(G.layDownGroups(u, [[N(9).id, N(9, 'blue').id, N(9, 'green').id], [N(5).id, N(6).id, N(8).id, N(12).id]]).reason, /not in your hand/);
+});

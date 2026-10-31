@@ -42,6 +42,7 @@ export function shortName(c) {
 export function phase(n) { return PHASES[n - 1]; }
 export function phaseLabel(n) { return n > 10 ? 'All phases done' : `Phase ${n}: ${PHASES[n - 1].label}`; }
 export function phaseMinCards(n) { return PHASES[n - 1].comps.reduce((a, c) => a + c.n, 0); }
+export function compLabel(c) { return c.type === 'set' ? `Set of ${c.n}` : c.type === 'run' ? `Run of ${c.n}` : `${c.n} of one colour`; }
 
 /** Does a slot accept a card? slot = {num} (set/run position) or {color}. Wilds fit anywhere; Skips nowhere. */
 function accept(slot, c) {
@@ -253,6 +254,163 @@ export function explainLayDown(selected, phaseNo, opts = {}) {
   const d = deficit(selected, phaseNo, opts);
   if (d.need > 0) return `Those cards are ${d.need} short of ${label}`;
   return `Some selected cards don't fit into ${label} — leave the extras in your hand (you can hit them afterwards)`;
+}
+
+// ---------------------------------------------------------------- staging (a group you are still assembling)
+// The UI lets you set cards aside per phase component before laying down. These helpers decide what may join such a
+// group and how it is shown as card positions; validateGroups checks the final arrangement when it is laid down.
+
+/** Why card `c` can't join the cards already set aside for `comp` (null = it fits). */
+export function whyNotFit(comp, cs, c) {
+  if (c.kind === 'skip') return 'Skips can\'t be laid down';
+  const nums = cs.filter(isNum);
+  if (comp.type === 'set') return c.kind === 'num' && nums.length && nums[0].num !== c.num ? `that set is ${nums[0].num}s` : null;
+  if (comp.type === 'color') return c.kind === 'num' && nums.length && nums[0].color !== c.color ? `that group is ${nums[0].color}` : null;
+  if (cs.length >= 12) return 'a run can\'t be longer than 12';
+  if (c.kind === 'num' && nums.some(x => x.num === c.num)) return `${c.num} is already in that run`;
+  return null;
+}
+export const fits = (comp, cs, c) => whyNotFit(comp, cs, c) == null;
+
+/** Can `adds` all join, one after another? The first reason, or null when they all fit. */
+export function whyNotFitAll(comp, cs, adds) {
+  let cur = cs;
+  for (const c of adds) {
+    const why = whyNotFit(comp, cur, c);
+    if (why) return why;
+    cur = [...cur, c];
+  }
+  return null;
+}
+
+/**
+ * layoutGroup(comp, cs, { wildPos, picked }) -> how an uncommitted group is shown, as card positions.
+ *   positions  [{ card, value, need, ext }] — card null for an empty position; runs are ordered low → high and every
+ *              position carries the value it stands for; `need` = must be filled before the group is valid, `ext` = an
+ *              optional position where one more card could go
+ *   valid      the cards form a complete, legal group (≥ comp.n cards, at least one natural, no gaps)
+ *   missing    number of `need` positions
+ *   reason     why the group isn't valid yet (null when valid)
+ *   key        set number / colour / run start once the cards fix it
+ *   lo, hi     runs: values of the first and last card
+ * Runs: naturals take the positions of their values. A wild with an entry in `wildPos` (card id → value) stays at
+ * that value unless a natural now occupies it (then it floats again). Floating wilds fill the gaps lowest first; the
+ * rest extend the high end, or the low end once 12 is reached. Positions still needed to reach comp.n are added at the
+ * high end (low end once 12 is reached). A valid run shows an extension position at each end that isn't 1 / 12; sets
+ * and colours show one. With `picked` (a wild of this run is selected to be moved) an incomplete run also shows the
+ * positions just beyond each end so the wild can be moved there.
+ */
+export function layoutGroup(comp, cs, { wildPos = {}, picked = null } = {}) {
+  const n = comp.n;
+  const nums = cs.filter(isNum);
+  const wilds = cs.filter(isWild).sort((a, b) => a.id - b.id);
+  const out = { type: comp.type, n, positions: [], valid: false, missing: 0, reason: null, key: null, lo: null, hi: null };
+  const plural = (k) => `${k} more card${k === 1 ? '' : 's'}`;
+  if (cs.some(isSkip)) out.reason = 'Skips can\'t be laid down';
+
+  if (comp.type !== 'run') {
+    out.key = nums.length ? (comp.type === 'set' ? nums[0].num : nums[0].color) : null;
+    const same = comp.type === 'set' ? (c) => c.num === out.key : (c) => c.color === out.key;
+    if (!out.reason && !nums.every(same)) out.reason = comp.type === 'set' ? 'the numbers don\'t match' : 'the colours don\'t match';
+    out.positions = cs.map(c => ({ card: c, value: out.key }));
+    out.missing = Math.max(n - cs.length, nums.length ? 0 : 1);
+    for (let i = 0; i < out.missing; i++) out.positions.push({ card: null, need: true, value: out.key });
+    if (out.reason) return out;
+    if (out.missing) out.reason = !nums.length && cs.length >= n ? 'needs a real card, not just Wilds' : `needs ${plural(out.missing)}`;
+    else { out.valid = true; out.positions.push({ card: null, ext: true, value: out.key }); }
+    return out;
+  }
+
+  // run: anchors are the naturals plus the wilds the player pinned to a free value
+  const anchor = new Map();   // value → card
+  const floating = [];
+  for (const c of nums) {
+    if (anchor.has(c.num)) { out.reason ??= `two ${c.num}s can't be in one run`; floating.push(c); }
+    else anchor.set(c.num, c);
+  }
+  for (const w of wilds) {
+    const v = Number(wildPos[w.id]);
+    if (Number.isInteger(v) && v >= 1 && v <= 12 && !anchor.has(v)) anchor.set(v, w); else floating.push(w);
+  }
+  if (!anchor.size) {
+    out.positions = wilds.map(c => ({ card: c }));
+    out.missing = Math.max(n - wilds.length, 1);
+    for (let i = 0; i < out.missing; i++) out.positions.push({ card: null, need: true });
+    if (!out.reason) out.reason = wilds.length >= n ? 'needs a real card, not just Wilds' : `needs ${plural(out.missing)}`;
+    return out;
+  }
+  const vals = [...anchor.keys()];
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const gaps = hi - lo + 1 - vals.length;
+  const g = Math.min(floating.length, gaps), r = floating.length - g;
+  const high = Math.min(r, 12 - hi), low = r - high;
+  if (low > lo - 1) out.reason ??= 'a run can\'t be longer than 12';
+  const lo2 = lo - low, hi2 = hi + high;
+  let fi = 0, filled = 0;
+  for (let v = lo2; v <= hi2; v++) {
+    if (anchor.has(v)) out.positions.push({ card: anchor.get(v), value: v });
+    else if (v < lo || v > hi) out.positions.push({ card: floating[fi++], value: v });
+    else if (filled < g) { filled++; out.positions.push({ card: floating[fi++], value: v }); }
+    else out.positions.push({ card: null, need: true, value: v });
+  }
+  while (fi < floating.length) out.positions.push({ card: floating[fi++] });   // overflow (invalid): still shown
+  out.missing = gaps - g;
+  const length = hi2 - lo2 + 1;
+  let short = Math.max(0, n - length);
+  if (!nums.length && !short && !out.missing) short = 1;   // only wilds: one more position, for the natural the run needs
+  const needHigh = Math.min(short, 12 - hi2), needLow = short - needHigh;
+  out.missing += short;
+  const lows = [], highs = [];
+  for (let i = needLow; i >= 1; i--) lows.push({ card: null, need: true, value: lo2 - i });
+  for (let i = 1; i <= needHigh; i++) highs.push({ card: null, need: true, value: hi2 + i });
+  out.lo = lo2; out.hi = hi2; out.key = lo2;
+  if (!out.reason) {
+    if (!nums.length) out.reason = 'needs a real card, not just Wilds';
+    else if (out.missing) out.reason = `needs ${plural(out.missing)}`;
+    else out.valid = true;
+  }
+  if (out.valid || picked != null) {
+    const first = lo2 - needLow, last = hi2 + needHigh;
+    if (first > 1) lows.unshift({ card: null, ext: true, value: first - 1 });
+    if (last < 12) highs.push({ card: null, ext: true, value: last + 1 });
+  }
+  out.positions = [...lows, ...out.positions, ...highs];
+  return out;
+}
+
+/**
+ * validateGroups(lists, phaseNo, opts) -> { groups } | { error }
+ * lists[k]: the cards of component k in table order (runs low → high, wilds where they stand). Each component needs
+ * at least its n cards and one natural; extras extend the group. Used to lay down an explicit arrangement.
+ */
+export function validateGroups(lists, phaseNo, opts = {}) {
+  const comps = phase(phaseNo).comps;
+  if (lists.length !== comps.length) return { error: 'Wrong number of groups' };
+  const groups = [];
+  for (let k = 0; k < comps.length; k++) {
+    const comp = comps[k], cs = lists[k], label = compLabel(comp);
+    if (cs.some(isSkip)) return { error: 'Skip cards can\'t be laid down' };
+    if (cs.length < comp.n) return { error: `${label} needs ${comp.n} cards (it has ${cs.length})` };
+    const nums = cs.filter(isNum);
+    if (!nums.length) return { error: `${label} needs at least one real card` };
+    if (comp.type === 'set') {
+      if (nums.some(c => c.num !== nums[0].num)) return { error: `${label}: the cards must all be the same number` };
+      groups.push({ type: 'set', key: nums[0].num, cards: cs });
+    } else if (comp.type === 'color') {
+      if (nums.some(c => c.color !== nums[0].color)) return { error: `${label}: the cards must all be one colour` };
+      groups.push({ type: 'color', key: nums[0].color, cards: cs });
+    } else {
+      const i0 = cs.findIndex(isNum);
+      const lo = cs[i0].num - i0, hi = lo + cs.length - 1;
+      if (lo < 1 || hi > 12) return { error: `${label} would run past ${lo < 1 ? 1 : 12}` };
+      if (cs.some((c, i) => isNum(c) && c.num !== lo + i)) return { error: `${label}: the numbers must be consecutive` };
+      groups.push({ type: 'run', key: lo, lo, hi, cards: cs });
+    }
+  }
+  if (groups.length === 2 && groups[0].type === 'set' && groups[1].type === 'set' && groups[0].key === groups[1].key && opts.allowSameNumberSets === false) {
+    return { error: 'The two sets may not share a number' };
+  }
+  return { groups };
 }
 
 // ---------------------------------------------------------------- hits

@@ -4,7 +4,7 @@
    Cards in your slots and hand use --cw (set by fitCards() in main.js so both rows fit the screen). */
 .p10 {
   display: grid; overflow: hidden; width: 100%; max-width: 1100px; margin: 0 auto;
-  --scale: 1; --cw: 56px; --ow: 22px;
+  --scale: 1; --cw: 56px; --sw: 56px; --ow: 22px;
   --red: #d8333c; --blue: #2f6fde; --green: #2ea85a; --yellow: #e2b100;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto auto auto minmax(0, 1fr) auto;
@@ -35,6 +35,17 @@
   background: repeating-linear-gradient(45deg, #fff2 0 3px, transparent 3px 7px), repeating-linear-gradient(-45deg, #fff2 0 3px, transparent 3px 7px);
 }
 .card.missing { background: transparent; box-shadow: inset 0 0 0 2px #fff5; color: #fff8; }
+/* empty positions of a group you are assembling: dashed, showing the value they stand for (need = must be filled, ext = optional extra) */
+.card.pos { background: #181c25; box-shadow: none; border: 2px dashed #ffffff30; color: #ffffff55; text-shadow: none; z-index: 0; }   /* opaque: overlapped positions don't bleed through */
+.card.pos .k.r { left: auto; right: 7%; }
+.card.pos.need { background: #232833; border-color: #ffffff55; color: #ffffff88; }
+.card.pos.ext { border-color: #ffffff22; color: #ffffff40; }
+.card.pos.k-red { border-color: var(--red); color: var(--red); opacity: .6; }
+.card.pos.k-blue { border-color: var(--blue); color: var(--blue); opacity: .6; }
+.card.pos.k-green { border-color: var(--green); color: var(--green); opacity: .6; }
+.card.pos.k-yellow { border-color: var(--yellow); color: var(--yellow); opacity: .6; }
+.card.pos.target, .card.pos.dropping { border-style: solid; border-color: var(--accent-2); color: var(--accent-2); background: #3a3121; opacity: 1; }
+.card.pos.dropping { background: #5a4727; }
 .card.small .k { display: none; }
 .card .as { position: absolute; bottom: 4%; right: 8%; font-size: 9px; opacity: .8; }
 .card.ghost { position: fixed; z-index: 150; pointer-events: none; transform: translate(-50%, -60%) rotate(-4deg); box-shadow: 0 10px 24px #000c, inset 0 0 0 2px #fff6; }
@@ -52,6 +63,8 @@
 .slot.filled .slot-label { background: #4f8cff33; color: var(--fg); }
 .slot.target { box-shadow: 0 0 0 2px var(--accent-2), inset 0 0 0 1px #fff1; }
 .slot.target .slot-label { background: #ffb34755; color: #fff; }
+.slot.dropping { box-shadow: 0 0 0 2px var(--accent-2), inset 0 0 0 2px var(--accent-2); background: #ffb34722; }
+.slot.dropping .slot-label { background: #ffb34788; color: #fff; }
 
 /* ---- opponents ---------------------------------------------------------- */
 .opps-bar { grid-area: opps; display: flex; align-items: stretch; background: var(--bg-2); border-bottom: 1px solid #0006; min-width: 0; }
@@ -101,8 +114,9 @@
 .pile .count { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font-weight: 800; font-size: 16px; color: #fff; text-shadow: 0 1px 3px #000; }
 .pile .label { position: absolute; left: 0; right: 0; bottom: -16px; font-size: 10px; color: var(--fg-dim); text-align: center; }
 .pile.empty { box-shadow: inset 0 0 0 2px #fff3; }
-.pile.ready .card, .pile.ready { box-shadow: 0 0 0 3px var(--accent-2); }
-.pile:disabled { cursor: default; }
+.pile.ready .card, .pile.ready, .pile.target .card, .pile.target { box-shadow: 0 0 0 3px var(--accent-2); }
+.pile.dropping .card, .pile.dropping { box-shadow: 0 0 0 4px var(--accent-2), 0 0 18px var(--accent-2); }
+.pile[aria-disabled="true"] { cursor: default; }
 .log {
   flex: 1 1 auto; min-width: 0; text-align: left; border: 0; background: var(--panel); color: var(--fg-dim);
   border-radius: 8px; padding: 6px 8px; font-size: 12px; line-height: 1.35; cursor: pointer;
@@ -124,17 +138,17 @@
 .pill { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--panel-2); color: var(--fg); white-space: nowrap; }
 .me-head .hint { margin-left: auto; color: var(--accent-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .me-head .hint.ok { color: var(--ok); }
-.stage { display: flex; gap: 8px; min-width: 0; --w: var(--cw); }
-.stage .slot { flex: 1 1 0; background: #0004; box-shadow: inset 0 0 0 1px #fff2; cursor: pointer; }
+.stage { display: flex; gap: 8px; min-width: 0; --w: var(--sw); }
+.stage .slot { flex: var(--n, 1) 1 0; background: #0004; box-shadow: inset 0 0 0 1px #fff2; cursor: pointer; }   /* width ∝ positions shown */
 .stage .slot .slot-cards { min-height: calc(var(--w) * 1.4 + 8px); padding: 4px 6px; }
 .stage .slot .slot-cards .card + .card { margin-left: clamp(calc(var(--w) * -0.65), calc((100cqw - 12px - var(--w) * var(--n)) / (var(--n) - 1)), 6px); }
-.stage .slot.empty .slot-cards::after { content: 'tap or drag cards here'; color: #fff4; font-size: 11px; margin: auto; }
 .stage .slot.complete { box-shadow: inset 0 0 0 2px var(--ok); }
 .stage .slot.complete .slot-label { background: #4fd18b44; color: #fff; }
-.stage .slot.dropping { box-shadow: inset 0 0 0 2px var(--accent-2); background: #ffb34722; }
 .stage .slot .slot-label { font-size: 11px; padding: 2px 4px; }
-.stage .card { --w: var(--cw); cursor: pointer; }
-.stage .card.sel { box-shadow: 0 0 0 3px var(--accent-2), 0 4px 10px #0009; }
+.stage .card { --w: var(--sw); cursor: pointer; z-index: 1; }   /* real cards sit above empty positions when they overlap */
+.stage .card.small .k { display: block; }   /* your laid-down groups keep the corner labels: overlapped cards stay readable */
+.stage .card.picked { box-shadow: 0 0 0 3px var(--accent-2), 0 4px 10px #0009; transform: translateY(-4px); z-index: 1; }
+.stage .card .as { font-size: calc(var(--w) * 0.18); left: 8%; right: auto; bottom: 6%; }   /* bottom-left: the right side may be under the next card */
 .stage:empty::after { content: 'All phases done'; color: var(--fg-dim); font-size: 13px; }
 .hand-wrap { grid-area: hand; min-height: 0; background: var(--bg-2); border-top: 1px solid #0006; display: flex; flex-direction: column; justify-content: flex-end; }
 .hand {
@@ -146,7 +160,8 @@
 .hand .card.sel { transform: translateY(-10px); box-shadow: 0 0 0 3px var(--accent-2), 0 6px 14px #0009; }
 .hand .card.new { animation: pop .25s ease; }
 .hand .empty { color: var(--fg-dim); font-size: 13px; align-self: center; }
-.hand.dropping { box-shadow: inset 0 0 0 2px var(--accent-2); }
+.hand-wrap.target { box-shadow: inset 0 0 0 2px var(--accent-2); }
+.hand-wrap.dropping { box-shadow: inset 0 0 0 3px var(--accent-2); background: #ffb34718; }
 @keyframes pop { from { transform: translateY(8px) scale(.9); opacity: 0; } }
 
 /* keep toasts clear of the action bar and hand */

@@ -15,6 +15,7 @@ export const DEFAULTS = {
   cardScale: 1.0,              // 0.7–1.3, scales the cards in the player's hand
   sortHand: 'number',          // 'number' | 'color' | 'none'
   promptLayDown: true,         // ask to lay down as soon as the cards in your phase slots complete the phase
+  slotHints: true,             // highlight your slots / laid-down groups a selected card could join (off: find the plays yourself)
   showOpponentHands: false,    // cheat/debug: reveal the AI players' cards
 };
 

@@ -126,6 +126,8 @@ card: {id, kind:'num'|'wild'|'skip', num?, color?}   PHASES[]: [{comps:[{type:'s
 hand fit: canComplete(hand, phase) -> arrangement | null ; deficit(hand, phase) -> min cards still needed
           implemented by enumerating component "shapes" (set number / run start / colour) and running a
           small bipartite matching of cards→slots (wilds match any slot).
+staging: whyNotFit(comp, cards, c) -> reason | null ; layoutGroup(comp, cards, {wildPos, picked}) -> {positions, valid, missing, reason, lo, hi}
+         validateGroups(lists, phase, opts) -> {groups} | {error}   (explicit arrangement, used by game.layDownGroups)
 game: {players:[{name, ai?, hand, phase (1-10), laidDown:bool, score}], table:[{owner, comp, cards}], deck, discard, turn, phaseOfTurn:'draw'|'play'|'done', skipped:Set}
 ```
 
@@ -143,23 +145,46 @@ Every player has a panel with one **phase slot per component** of their current 
 "Set of 3", "Run of 4", …). Opponent panels (name, strategy badge, phase, score, a fan of face-down
 cards for the hand size) sit in a strip at the top with the ⋯ menu button and hand number at its end;
 their slots fill with the laid-down groups, which are the hit targets. Your panel (phase pill, deficit
-hint, your slots) sits above your hand. Before laying down, your slots are a **staging area**: drag cards
-there from the hand (or select and tap a slot) at any time, including during other players' turns, to keep
-them apart from the rest of the hand; tap/drag a card back to return it. A slot turns green when its cards
-form a valid group; when the slots hold a complete phase during your play stage you are asked whether to
-lay down (`promptLayDown` setting, once per arrangement). *Lay down* plays the slots plus any selected hand
-cards; laid-down groups then show in the slots. Staging lives in `localStorage["rounds.ui"]` keyed by
-seed + hand, not in the game state.
+hint, your slots) sits above your hand.
+
+Before laying down, your slots are a **staging area** that shows the group you are assembling as card
+**positions** (`rules.js:layoutGroup`, pure, tested): a dashed outline per card the component still needs,
+plus an *extension* position at each open end once the group is valid, so the cards you would otherwise hit
+afterwards can be added before laying down. Sets and colour groups show n positions, then n + 1 while filled.
+Runs are ordered by value: naturals take the position of their number, wilds fill the gaps lowest first and
+the rest sit at the high end (low end once 12 is reached); positions still needed are added at the high end
+(then the low end). Tap a wild in a run to pick it up, then tap any empty position (an incomplete run also
+shows the position just beyond each end) to move it there, or tap the hand to take it back; a moved wild is
+*pinned* to its value (the other wilds are pinned where they stand, so only the moved one changes) until a
+natural lands on that value, which unpins it and it floats like a newly added wild. Cards that can't belong
+to the group (wrong number for a set, wrong colour for a colour group, a number already in the run, Skips,
+a 13th run card) are refused with a toast (`rules.js:whyNotFit`). Drag cards into the slots at any time,
+including during other players' turns; tap any other card in a slot to return it. A slot turns green when its
+positions form a valid group; when every slot is valid during your play stage you are asked whether to lay
+down (`promptLayDown`, once per turn). *Lay down* plays the slots exactly as shown: `game.js:layDownGroups` →
+`rules.js:validateGroups` checks the explicit arrangement (so a wild stays at the end you put it); the
+matcher-chosen `layDown(ids)` remains for the AI. Staging lives in `localStorage["rounds.ui"]` (`staged[k]` card
+ids, `wildPos[k]` wild id → pinned value) keyed by seed + hand, not in the game state.
+
+**Moves** (`main.js`): taps and drags share one model. A *payload* (selected hand cards, a card in a slot, the
+deck, the discard top) goes to a *target* (one of your slots or a position in it, your hand, the discard pile,
+a laid-down group). `whyNot(payload, target)` allows or explains, `perform` executes, and `renderTargets`
+lights every allowed destination of the current selection: your slots the card fits and groups it can be hit
+onto (both only while the `slotHints` setting is on, so plays can be hunted for unaided), the discard pile
+(tap it to discard), and for a picked wild the empty positions of its run plus your hand. Every pair drags:
+hand → slot / position / group / discard, slot card → hand / another slot / position / discard, deck → hand
+(draw), discard top → hand or a fitting slot (take + stage).
 
 Layout is one CSS grid with two arrangements (`rounds.css`): portrait = strip / deck + discard + log /
 your slots / hand / action bar; landscape (`orientation: landscape` and ≥ 640 px) = strip across the top,
 slots + hand on the left, deck/discard/log and the action buttons in a right column. `fitCards()` sets
-`--cw` so the slot row and hand row both fit the remaining height (capped by the card-size setting).
-Cards inside a slot spread out when there is room and overlap when there isn't (container-query units,
-`--n` = card count). Buttons: Draw / Take discard, Lay down, Hit (selected card → tapped group), Discard.
+`--cw` so the slot row and hand row both fit the remaining height (capped by the card-size setting), and `--sw`
+for the cards in your slots, shrunk only as far as needed to keep ≥ 55 % of every card visible. Your slots are
+as wide as their position counts (`--n`, also the flex-grow); cards inside a slot spread out when there is room
+and overlap when there isn't (container-query units), with real cards drawn above empty positions. Buttons: Draw / Take discard, Lay down, Hit (selected card → tapped group), Discard.
 Skip target chooser modal. Hand-end summary with scores/phase progress. Settings: opponent count (1–5),
-strategy per seat (or random), AI delay, card size, hand sort, lay-down prompt, rule toggles, show
-opponents' hands (cheat/debug).
+strategy per seat (or random), AI delay, card size, hand sort, lay-down prompt, destination hints on slots and
+groups, rule toggles, show opponents' hands (cheat/debug).
 
 ---
 
