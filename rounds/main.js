@@ -299,6 +299,7 @@ function renderTargets() {
   const allow = (t) => whyNot(p, t) == null;
   const hints = !!settings.get('slotHints');
   if (hints) for (const el of main.querySelectorAll('.slot[data-group]')) el.classList.toggle('target', allow({ kind: 'group', id: Number(el.dataset.group) }));
+  for (const el of oppsEl.querySelectorAll('.opp[data-player]')) el.classList.toggle('target', allow({ kind: 'player', i: Number(el.dataset.player) }));
   for (const el of stageEl.querySelectorAll('.slot:not([data-group])')) {
     const k = Number(el.dataset.slot);
     if (p.from === 'hand') { if (hints) el.classList.toggle('target', allow({ kind: 'slot', k })); }
@@ -422,6 +423,7 @@ function gameInProgress() {
 // ---------------------------------------------------------------- moves: one model for taps and drags
 // payload: what is being moved — { from: 'hand' | 'slot' | 'deck' | 'discard', ids: [cardId], slot?: k }
 // target:  where it goes    — { kind: 'slot', k, value? } | { kind: 'hand' } | { kind: 'discard' } | { kind: 'group', id } | { kind: 'deck' }
+//                              | { kind: 'player', i } (an opponent's panel: a Skip discarded onto them skips them)
 // A target's `value` is the run position (see layoutGroup) that was tapped / dropped on; it only matters for wilds.
 
 /** The current selection as a payload: a picked wild in one of your slots, or the selected hand cards. */
@@ -443,6 +445,10 @@ function whyNot(p, t) {
     case 'discard':
       if (!playing() || p.from !== 'hand') return '';
       return cs.length === 1 ? null : 'Discard one card at a time';
+    case 'player': {
+      if (!playing() || p.from !== 'hand' || cs.length !== 1 || !R.isSkip(cs[0])) return '';
+      return G.eligibleSkipTargets(state).includes(t.i) ? null : `${nameOf(t.i)} can't be skipped right now`;
+    }
     case 'group': {
       if (!playing() || p.from !== 'hand') return '';
       if (!me().laidDown) return 'Lay down your phase first, then you can hit';
@@ -478,6 +484,7 @@ function perform(p, t) {
   switch (t.kind) {
     case 'hand': unstage(p.ids); break;
     case 'discard': doDiscard(p.ids[0]); break;
+    case 'player': doDiscard(p.ids[0], t.i); break;
     case 'group': doHit(p.ids[0], t.id); break;
     case 'slot': if (p.from === 'slot' && p.slot === t.k) placeWild(t.k, p.ids[0], t.value); else stageCards(t.k, p.ids, t.value); break;
   }
@@ -558,11 +565,11 @@ async function doHit(id, groupId) {
   afterAction();
 }
 
-async function doDiscard(id) {
+/** Discard a card; a Skip needs a `target` player (asked for when not given and more than one is eligible). */
+async function doDiscard(id, target = null) {
   if (!playing()) return;
   const c = R.card(id);
-  let target = null;
-  if (R.isSkip(c)) {
+  if (R.isSkip(c) && target == null) {
     const eligible = G.eligibleSkipTargets(state);
     if (eligible.length === 1) target = eligible[0];
     else if (eligible.length > 1) {
@@ -615,6 +622,8 @@ function startDrag(i, payload) {
 function targetAt(x, y, payload) {
   const over = elementAt(x, y, [drag?.ghost]);
   if (!over || !over.closest) return null;
+  const opp = over.closest('.opp[data-player]');
+  if (opp && payload.ids.length === 1 && R.isSkip(R.card(payload.ids[0]))) return { kind: 'player', i: Number(opp.dataset.player) };
   const slot = over.closest('.slot');
   if (slot) {
     if (slot.dataset.group) return { kind: 'group', id: Number(slot.dataset.group) };
@@ -638,6 +647,7 @@ function targetEl(t) {
       return (t.value != null && slot?.querySelector(`.card.pos[data-value="${t.value}"]`)) || slot;
     }
     case 'group': return main.querySelector(`.slot[data-group="${t.id}"]`);
+    case 'player': return oppsEl.querySelector(`.opp[data-player="${t.i}"]`);
     case 'discard': return discardEl;
     case 'deck': return deckEl;
     case 'hand': return handWrap;
@@ -717,9 +727,15 @@ onPress(stageEl, {
   },
 });
 
-// opponents' groups: hit targets
+// opponents: their groups are hit targets; with a Skip selected, the panel itself is the target
 onPress(oppsEl, {
-  onTap(i) { const slot = i.downTarget?.closest?.('.slot'); if (slot?.dataset.group) tapTarget({ kind: 'group', id: Number(slot.dataset.group) }); },
+  onTap(i) {
+    const opp = i.downTarget?.closest?.('.opp[data-player]');
+    const c = selectedCard();
+    if (opp && c && R.isSkip(c)) { tapTarget({ kind: 'player', i: Number(opp.dataset.player) }); return; }
+    const slot = i.downTarget?.closest?.('.slot');
+    if (slot?.dataset.group) tapTarget({ kind: 'group', id: Number(slot.dataset.group) });
+  },
   preventDefault: false,
 });
 
@@ -888,7 +904,7 @@ function showHelp() {
       h('p', {}, h('b', {}, 'Turn: '), 'draw from the deck or take the top discard (not a Skip) → optionally lay down your whole phase at once → once laid down, hit any card that fits onto any group on the table → discard one card.'),
       h('p', {}, h('b', {}, 'Phase slots: '), 'the slots above your hand show what your phase needs, one dashed position per card. At any time, drag cards there from your hand (or select them and tap a slot); a card that doesn\'t belong in the group is refused. Runs arrange themselves by number — wilds fill the gaps lowest first and otherwise sit at the high end. Tap a wild in a run to pick it up, then tap any empty position (including beyond either end) to move it there, or tap your hand to take it back. Once a group is complete, an extra position opens at each end so you can add the cards you would otherwise hit afterwards. ', h('b', {}, 'Lay down'), ' plays the slots exactly as shown. Tap any other card in a slot to return it to your hand.'),
       h('p', {}, h('b', {}, 'Destinations: '), 'when a card is selected, everywhere it can go lights up: your slots, the groups on the table it can be hit onto, and the discard pile — tap one, or drag the card there. The deck and discard pile can be dragged into your hand to draw.'),
-      h('p', {}, h('b', {}, 'Groups: '), 'set = same number, any colours · run = consecutive numbers, no wrap · colour = all one colour. Wilds stand in for anything; every group needs at least one real card. Discarding a Skip makes a player of your choice lose their next turn.'),
+      h('p', {}, h('b', {}, 'Groups: '), 'set = same number, any colours · run = consecutive numbers, no wrap · colour = all one colour. Wilds stand in for anything; every group needs at least one real card. Discarding a Skip makes a player of your choice lose their next turn: select it and tap (or drag it onto) that player, or discard it and pick from the list.'),
       h('p', {}, h('b', {}, 'Hints: '), 'the line above your slots shows how many cards you are from completing your phase. Opponents each have a strategy badge: ', Object.values(STRATEGIES).map((s, i) => [i ? ', ' : '', h('b', { text: s.name })]), '. They all play well; the badges only change their priorities (points, defence, when to Skip whom).'),
     ),
   });

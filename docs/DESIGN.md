@@ -168,12 +168,13 @@ ids, `wildPos[k]` wild id → pinned value) keyed by seed + hand, not in the gam
 
 **Moves** (`main.js`): taps and drags share one model. A *payload* (selected hand cards, a card in a slot, the
 deck, the discard top) goes to a *target* (one of your slots or a position in it, your hand, the discard pile,
-a laid-down group). `whyNot(payload, target)` allows or explains, `perform` executes, and `renderTargets`
+a laid-down group, or an opponent's panel for a Skip). `whyNot(payload, target)` allows or explains, `perform` executes, and `renderTargets`
 lights every allowed destination of the current selection: your slots the card fits and groups it can be hit
 onto (both only while the `slotHints` setting is on, so plays can be hunted for unaided), the discard pile
-(tap it to discard), and for a picked wild the empty positions of its run plus your hand. Every pair drags:
-hand → slot / position / group / discard, slot card → hand / another slot / position / discard, deck → hand
-(draw), discard top → hand or a fitting slot (take + stage).
+(tap it to discard), for a selected Skip the opponents who can be skipped (tap one to skip them; the discard
+pile still opens the chooser), and for a picked wild the empty positions of its run plus your hand. Every pair
+drags: hand → slot / position / group / discard / opponent panel (Skip), slot card → hand / another slot /
+position / discard, deck → hand (draw), discard top → hand or a fitting slot (take + stage).
 
 Layout is one CSS grid with two arrangements (`rounds.css`): portrait = strip / deck + discard + log /
 your slots / hand / action bar; landscape (`orientation: landscape` and ≥ 640 px) = strip across the top,
