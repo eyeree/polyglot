@@ -280,7 +280,8 @@ endless-pool modes, never in Bag mode).
 
 UI: scrollable/pannable board with auto-expanding bounds (2-cell margin) or the fixed outlined square of a
 bounded mode, zoom buttons, bonus cells drawn under tiles; tap a hand tile → tap a cell to place tentatively
-(hints show where the selected tile can join the tentative tiles, which in chain modes means next to them); *Play*
+(only cells where the selected tile legally joins the tentative tiles accept it, hints or not; hints highlight
+them, which in chain modes means next to them); *Play*
 commits (validates and scores), *Take back*, *Swap* mode (hidden in Bag mode), *Pass* when allowed. Opponent strip
 with name/strategy/total score/round score (tile count in Classic and Bag) and last-move highlight; the stat
 corner shows the bag, or round + turn/goal. Round end: modal with the round table and *Next round* (also on the

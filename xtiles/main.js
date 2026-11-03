@@ -187,11 +187,10 @@ function lastMoveKeys() {
   return m;
 }
 
-/** Cells where the selected hand tile can legally join the tentative tiles. */
-function hintCells() {
+/** Cells where hand tile `handIdx` can legally join the tentative tiles (placement is limited to these). */
+function legalCells(handIdx) {
   const out = new Set();
-  if (!settings.get('showHints') || selected == null || swapMode || !isHumanTurn()) return out;
-  const tile = human().hand[selected];
+  const tile = human().hand[handIdx];
   if (tile == null) return out;
   const occupied = R.overlay(game.board, tentative);
   const cand = new Map();
@@ -203,6 +202,12 @@ function hintCells() {
   const opts = G.rulesOpts(game);
   for (const [k, c] of cand) if (R.validate(game.board, [...base, { x: c.x, y: c.y, tile }], opts).ok) out.add(k);
   return out;
+}
+
+/** Highlighted cells for the selected hand tile. */
+function hintCells() {
+  if (!settings.get('showHints') || selected == null || swapMode || !isHumanTurn()) return new Set();
+  return legalCells(selected);
 }
 
 /**
@@ -319,12 +324,11 @@ function onCellTap(x, y) {
   placeTentative(x, y, selected);
 }
 
-/** Put hand tile `handIdx` on (x,y) tentatively; nothing is validated until Play. */
+/** Put hand tile `handIdx` on (x,y) tentatively; only cells where it legally joins the tentative tiles are accepted. */
 function placeTentative(x, y, handIdx) {
   const tile = human().hand[handIdx];
   if (tile == null || tentative.some(p => p.handIdx === handIdx) || game.board.has(R.key(x, y))) return false;
-  const ti = tentative.findIndex(p => p.x === x && p.y === y);
-  if (ti >= 0) tentative.splice(ti, 1);
+  if (!legalCells(handIdx).has(R.key(x, y))) { toast("That tile can't go there"); return false; }
   tentative.push({ x, y, tile, handIdx });
   selected = null;
   renderHand(); renderBoard(); renderButtons();

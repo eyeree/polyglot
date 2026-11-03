@@ -29,12 +29,13 @@ body {
   user-select: none;
   -webkit-user-select: none;
   overscroll-behavior: none;
-  min-height: 100dvh;
 }
 button, input, select { font: inherit; color: inherit; }
 a { color: var(--accent); }
 
-.app { display: flex; flex-direction: column; height: 100dvh; padding-top: var(--safe-top); }
+/* Fixed to the viewport rather than height: 100dvh — on Android, dvh can be measured too tall at launch (until a
+   rotation) and push the bottom bar off screen. */
+.app { position: fixed; inset: 0; display: flex; flex-direction: column; padding-top: var(--safe-top); }
 .topbar {
   display: flex; align-items: center; gap: 6px;
   height: var(--topbar-h); padding: 0 8px; flex: 0 0 auto;
