@@ -1,4 +1,4 @@
-/* xTiles: player strip (with the menu button), scrollable board, hand, bottom bar. Bonus-cell hues match config.js:BONUS. */
+/* xTiles: player strip (with the menu button), scrollable board, hand, bottom bar. Bonus labels use --bonus (config.js:BONUS colours match it). */
 .players-bar { display: flex; align-items: stretch; flex: 0 0 auto; background: var(--bg-2); border-bottom: 1px solid #0006; padding-top: 4px; }
 .players { display: flex; gap: 6px; padding: 2px 6px 6px 8px; flex: 1 1 auto; min-width: 0; }
 .tools { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 2px 8px 6px 2px; }
@@ -28,34 +28,30 @@
 .main { position: relative; background: #0f1218; }
 .board-scroll { position: absolute; inset: 0; overflow: auto; touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch; }
 .board-wrap { display: grid; place-items: center; min-width: 100%; min-height: 100%; width: max-content; height: max-content; padding: 12px; }
-.board { position: relative; --cell: 44px; }
+.board { position: relative; --cell: 44px; --bonus: #8ee8e0; }
 .board.bounded { outline: 2px solid #ffffff2a; outline-offset: 1px; border-radius: 4px; background: #ffffff04; }
 .cell { position: absolute; width: var(--cell); height: var(--cell); padding: 2px; }
 .cell::before {
   content: ''; position: absolute; inset: 2px; border-radius: 5px;
   background: #ffffff07; box-shadow: inset 0 0 0 1px #ffffff0e;
 }
-.cell.b-add::before { background: #4fd18b2a; box-shadow: inset 0 0 0 1px #4fd18b70; }
-.cell.b-mul2::before { background: #ffb3472e; box-shadow: inset 0 0 0 1px #ffb34780; }
-.cell.b-mul3::before { background: #ff5da22e; box-shadow: inset 0 0 0 1px #ff5da280; }
+/* Bonus cells: no fill or border of their own — just the amount, centred, in one light turquoise. */
 .cell .blabel {
-  position: absolute; right: 5px; bottom: 4px; line-height: 1; font-weight: 700;
-  font-size: calc(var(--cell) * 0.27); color: #fff9; pointer-events: none;
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  line-height: 1; font-weight: 700; font-size: calc(var(--cell) * 0.4); color: var(--bonus); pointer-events: none;
 }
-.cell.b-add .blabel { color: #6fe3a6; }
-.cell.b-mul2 .blabel { color: #ffc46d; }
-.cell.b-mul3 .blabel { color: #ff82b8; }
 .cell.filled .blabel { display: none; }
 .cell.origin::after {
   content: ''; position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px;
   border-radius: 50%; background: #fff6;
 }
-.cell.hint::before { box-shadow: inset 0 0 0 2px var(--accent-2); background: #ffb34722; }
+/* Hints, last-move outlines and bonus labels avoid the tile colours: white / greys / turquoise only. */
+.cell.hint::before { box-shadow: inset 0 0 0 2px #fff; background: #ffffff12; }
 .cell.hint::after {
   content: ''; position: absolute; left: 50%; top: 50%; width: 28%; height: 28%; transform: translate(-50%, -50%);
-  border-radius: 50%; background: var(--accent-2); opacity: .6;
+  border-radius: 50%; background: #fff; opacity: .7;
 }
-.cell.hint.bonus::after { opacity: .8; }
+.cell.hint.bonus::after { display: none; } /* the centred bonus label sits where the dot would */
 
 .tile {
   position: relative; width: 100%; height: 100%; border-radius: 14%;
@@ -65,9 +61,9 @@
 }
 .tile svg { width: 84%; height: 84%; display: block; filter: drop-shadow(0 1px 0 #0009); }
 .tile.tentative { outline: 2px dashed var(--accent-2); outline-offset: -2px; box-shadow: 0 4px 10px #000c; }
-/* Previous-move outlines stay subtle so they don't compete with the (orange) legal-cell hints. */
-.tile.last-ai { box-shadow: 0 0 0 1px #4f8cff99, 0 1px 2px #000a; }
-.tile.last-me { box-shadow: 0 0 0 1px #ffffff40, 0 1px 2px #000a; }
+/* Previous-move outlines: light grey for the opponents' latest plays, mid grey for your own. */
+.tile.last-ai { box-shadow: 0 0 0 1.5px #cfcfcf, 0 1px 2px #000a; }
+.tile.last-me { box-shadow: 0 0 0 1.5px #808080, 0 1px 2px #000a; }
 
 .zoom { position: absolute; right: 10px; bottom: 10px; display: flex; flex-direction: column; gap: 6px; z-index: 2; }
 .zoom .btn {
@@ -123,7 +119,7 @@
 .breakdown .row { justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #0003; }
 .breakdown .total { font-weight: 700; border-bottom: 0; }
 .legend-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
-.legend-swatch { width: 22px; height: 22px; border-radius: 5px; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; }
+.legend-swatch { width: 26px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; }
 .help p { margin: 6px 0; }
 .shape-row { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
 .shape-row .tile { width: 34px; height: 34px; }

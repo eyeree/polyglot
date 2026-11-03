@@ -575,7 +575,7 @@ settings.onChange((k) => {
 
 function showHelp() {
   const legend = BONUS.kinds.map(k => h('div.legend-row', {},
-    h('span.legend-swatch', { style: { background: k.color + '40', boxShadow: `inset 0 0 0 1px ${k.color}`, color: k.color }, text: k.label }),
+    h('span.legend-swatch', { style: { color: k.color }, text: k.label }),
     h('span', { text: k.type === 'add' ? `adds ${k.min != null ? `${k.min} to ${k.max}` : k.n} to the move` : `multiplies ${settings.get('bonusMode') === 'move' ? 'the whole move' : 'the lines through that tile'} by ${k.n}` })));
   const modes = MODE_IDS.map(id => h('p', {}, h('b', {}, MODES[id].name + '. '), MODES[id].blurb));
   modal({

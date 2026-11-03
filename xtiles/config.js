@@ -69,9 +69,9 @@ export const MODE_IDS = Object.keys(MODES);
 export const BONUS = {
   safeRadius: 1,               // cells within this Manhattan distance of the origin are never bonus
   kinds: [
-    { id: 'add', type: 'add', min: 4, max: 12, weight: 70, label: '+n', color: '#4fd18b' },
-    { id: 'mul2', type: 'mul', n: 2, weight: 20, label: '×2', color: '#ffb347' },
-    { id: 'mul3', type: 'mul', n: 3, weight: 10, label: '×3', color: '#ff5da2' },
+    { id: 'add', type: 'add', min: 4, max: 12, weight: 70, label: '+n', color: '#8ee8e0' },
+    { id: 'mul2', type: 'mul', n: 2, weight: 20, label: '×2', color: '#8ee8e0' },
+    { id: 'mul3', type: 'mul', n: 3, weight: 10, label: '×3', color: '#8ee8e0' },
   ],
 };
 
